@@ -427,7 +427,6 @@ export default function App() {
   const [shader, setShader] = useState("wave");
   const [counter, setCounter] = useState(0);
   const [isLive, setIsLive] = useState(true);
-  const [showOriginal, setShowOriginal] = useState(true);
   const [snapshotMs, setSnapshotMs] = useState(0);
   const domRef = useRef(null);
   const canvasRef = useRef(null);
@@ -547,21 +546,6 @@ export default function App() {
         >
           {isLive ? "● Live" : "○ Paused"}
         </button>
-        <button
-          onClick={() => setShowOriginal(!showOriginal)}
-          style={{
-            padding: "8px 16px",
-            borderRadius: 8,
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(255,255,255,0.03)",
-            color: "#aaa",
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          {showOriginal ? "Hide" : "Show"} Original
-        </button>
         <span
           style={{
             fontSize: 11,
@@ -588,32 +572,23 @@ export default function App() {
         }}
       >
         {/* Original DOM */}
-        {showOriginal && (
-          <div>
-            <div
-              style={{
-                fontSize: 11,
-                color: "#6666aa",
-                marginBottom: 8,
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: 1,
-              }}
-            >
-              DOM Source
-            </div>
-            <div ref={domRef}>
-              <DemoContent counter={counter} />
-            </div>
+        <div>
+          <div
+            style={{
+              fontSize: 11,
+              color: "#6666aa",
+              marginBottom: 8,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+            }}
+          >
+            DOM Source
           </div>
-        )}
-
-        {/* Hidden DOM for snapshot when original is hidden */}
-        {!showOriginal && (
-          <div ref={domRef} style={{ position: "absolute", left: -9999, top: -9999 }}>
+          <div ref={domRef}>
             <DemoContent counter={counter} />
           </div>
-        )}
+        </div>
 
         {/* Shader Output */}
         <div>
