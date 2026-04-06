@@ -129,18 +129,11 @@ const SHADERS = {
 // ─── DOM Snapshot Engine ────────────────────────────────────
 // foreignObject SVG → data URI (not blob URL!) → Image → Canvas → WebGL
 // Data URIs are same-origin in all browsers, avoiding the tainted canvas error.
-
-function inlineStyles(source, clone) {
-  const computed = window.getComputedStyle(source);
-  for (const key of computed) {
-    clone.style.setProperty(key, computed.getPropertyValue(key));
-  }
-  for (let i = 0; i < source.children.length; i++) {
-    if (clone.children[i]) {
-      inlineStyles(source.children[i], clone.children[i]);
-    }
-  }
-}
+//
+// The snapshot uses cloneNode(true) which copies inline style attributes.
+// CSS classes from the host document (like .interactive-overlay) are NOT
+// applied inside SVG-as-image, so the clone renders with original visuals
+// even when the live DOM is transparent for interactive mode.
 
 function useDomSnapshot(domRef, deps = []) {
   const [texture, setTexture] = useState(null);
@@ -155,11 +148,15 @@ function useDomSnapshot(domRef, deps = []) {
     const height = el.offsetHeight;
 
     const clone = el.cloneNode(true);
-    inlineStyles(el, clone);
+    // Remove the interactive-overlay class from the clone so inline styles
+    // like background gradients in the style attribute are not overridden
+    clone.classList.remove("interactive-overlay");
 
     const xml = new XMLSerializer().serializeToString(clone);
     const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-      `<foreignObject width="100%" height="100%">${xml}</foreignObject>` +
+      `<foreignObject width="100%" height="100%">` +
+      `<style xmlns="http://www.w3.org/1999/xhtml">* { margin: 0; padding: 0; box-sizing: border-box; }</style>` +
+      `${xml}</foreignObject>` +
       `</svg>`;
 
     const img = new Image();
@@ -204,6 +201,9 @@ function useWebGLShader(canvasRef, texture, shaderCode) {
 
     canvas.width = texture.width;
     canvas.height = texture.height;
+    // CSS dimensions must match logical size (half of retina buffer)
+    canvas.style.width = (texture.width / 2) + "px";
+    canvas.style.height = (texture.height / 2) + "px";
 
     // Compile shaders
     const vs = gl.createShader(gl.VERTEX_SHADER);
@@ -292,8 +292,44 @@ function useWebGLShader(canvasRef, texture, shaderCode) {
   return { updateTexture };
 }
 
+// ─── Interactive Button ─────────────────────────────────────
+function InteractiveButton({ children, color = "#7c3aed", onClick }) {
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setPressed(false); }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      style={{
+        padding: "8px 16px",
+        borderRadius: 8,
+        border: `1px solid ${color}`,
+        background: pressed
+          ? `${color}60`
+          : hovered
+          ? `${color}40`
+          : `${color}20`,
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "all 0.15s ease",
+        transform: pressed ? "scale(0.96)" : hovered ? "scale(1.03)" : "scale(1)",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 // ─── Demo Content Component ─────────────────────────────────
 function DemoContent({ counter }) {
+  const [clicks, setClicks] = useState(0);
+
   return (
     <div
       style={{
@@ -372,6 +408,19 @@ function DemoContent({ counter }) {
         ))}
       </div>
 
+      {/* Interactive buttons */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <InteractiveButton color="#7c3aed" onClick={() => setClicks((c) => c + 1)}>
+          Clicks: {clicks}
+        </InteractiveButton>
+        <InteractiveButton color="#ec4899">
+          Hover me
+        </InteractiveButton>
+        <InteractiveButton color="#f59e0b">
+          Press me
+        </InteractiveButton>
+      </div>
+
       <div
         style={{
           padding: 16,
@@ -427,6 +476,7 @@ export default function App() {
   const [shader, setShader] = useState("wave");
   const [counter, setCounter] = useState(0);
   const [isLive, setIsLive] = useState(true);
+  const [isInteractive, setIsInteractive] = useState(true);
   const [snapshotMs, setSnapshotMs] = useState(0);
   const domRef = useRef(null);
   const canvasRef = useRef(null);
@@ -546,6 +596,21 @@ export default function App() {
         >
           {isLive ? "● Live" : "○ Paused"}
         </button>
+        <button
+          onClick={() => setIsInteractive(!isInteractive)}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 8,
+            border: "1px solid rgba(255,255,255,0.1)",
+            background: isInteractive ? "rgba(124,58,237,0.15)" : "rgba(255,255,255,0.03)",
+            color: isInteractive ? "#c4b5fd" : "#888",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {isInteractive ? "● Interactive" : "○ Side by Side"}
+        </button>
         <span
           style={{
             fontSize: 11,
@@ -561,59 +626,95 @@ export default function App() {
       </div>
 
       {/* Main Display */}
-      <div
-        style={{
-          maxWidth: 900,
-          margin: "0 auto",
-          display: "flex",
-          gap: 24,
-          flexWrap: "wrap",
-          justifyContent: "center",
-        }}
-      >
-        {/* Original DOM */}
-        <div>
-          <div
-            style={{
-              fontSize: 11,
-              color: "#6666aa",
-              marginBottom: 8,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-            }}
-          >
-            DOM Source
-          </div>
-          <div ref={domRef}>
-            <DemoContent counter={counter} />
+      {isInteractive ? (
+        /* Interactive mode: canvas below, transparent DOM on top (PDF.js pattern) */
+        <div style={{ maxWidth: 900, margin: "0 auto", display: "flex", justifyContent: "center" }}>
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "#6666aa",
+                marginBottom: 8,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}
+            >
+              Interactive Shader — {SHADERS[shader].name}
+            </div>
+            <div style={{ position: "relative", width: 420 }}>
+              {/* Canvas: shader output, visual layer below */}
+              <canvas
+                ref={canvasRef}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  borderRadius: 16,
+                  zIndex: 1,
+                  pointerEvents: "none",
+                }}
+              />
+              {/* DOM: real, interactive, on top — transparent via CSS class */}
+              <div ref={domRef} className="interactive-overlay" style={{ position: "relative", zIndex: 2 }}>
+                <DemoContent counter={counter} />
+              </div>
+            </div>
           </div>
         </div>
+      ) : (
+        /* Side by side mode */
+        <div
+          style={{
+            maxWidth: 900,
+            margin: "0 auto",
+            display: "flex",
+            gap: 24,
+            flexWrap: "wrap",
+            justifyContent: "center",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "#6666aa",
+                marginBottom: 8,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}
+            >
+              DOM Source
+            </div>
+            <div ref={domRef}>
+              <DemoContent counter={counter} />
+            </div>
+          </div>
 
-        {/* Shader Output */}
-        <div>
-          <div
-            style={{
-              fontSize: 11,
-              color: "#6666aa",
-              marginBottom: 8,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-            }}
-          >
-            GPU Shader Output — {SHADERS[shader].name}
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "#6666aa",
+                marginBottom: 8,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}
+            >
+              GPU Shader Output — {SHADERS[shader].name}
+            </div>
+            <canvas
+              ref={canvasRef}
+              style={{
+                borderRadius: 16,
+                background: "#0f0f23",
+              }}
+            />
           </div>
-          <canvas
-            ref={canvasRef}
-            style={{
-              width: 420,
-              borderRadius: 16,
-              background: "#0f0f23",
-            }}
-          />
         </div>
-      </div>
+      )}
 
       {/* Pipeline Diagram */}
       <div

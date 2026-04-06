@@ -7,6 +7,28 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #08080f; }
+
+    /* Interactive mode: DOM on top of canvas, visually transparent */
+    .interactive-overlay {
+      color: transparent !important;
+      -webkit-text-fill-color: transparent !important;
+    }
+    .interactive-overlay * {
+      background: transparent !important;
+      background-image: none !important;
+      border-color: transparent !important;
+      box-shadow: none !important;
+      outline-color: transparent !important;
+      text-shadow: none !important;
+    }
+    .interactive-overlay ::selection {
+      background: rgba(100, 130, 255, 0.35);
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+    .interactive-overlay button {
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
