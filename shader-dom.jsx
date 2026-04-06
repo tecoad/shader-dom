@@ -126,150 +126,61 @@ const SHADERS = {
   },
 };
 
-// ─── Canvas 2D Snapshot Engine ──────────────────────────────
-// foreignObject always taints the canvas (browser security),
-// so we render the card directly via Canvas 2D API.
+// ─── DOM Snapshot Engine ────────────────────────────────────
+// foreignObject SVG → data URI (not blob URL!) → Image → Canvas → WebGL
+// Data URIs are same-origin in all browsers, avoiding the tainted canvas error.
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
-
-function renderCardToCanvas(counter) {
-  const W = 420, H = 340;
-  const canvas = document.createElement("canvas");
-  canvas.width = W * 2;
-  canvas.height = H * 2;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(2, 2);
-
-  // Background gradient
-  const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, "#0f0f23");
-  bg.addColorStop(0.5, "#1a1a3e");
-  bg.addColorStop(1, "#0f0f23");
-  roundRect(ctx, 0, 0, W, H, 16);
-  ctx.fillStyle = bg;
-  ctx.fill();
-  ctx.save();
-  ctx.clip();
-
-  // Logo box
-  const logoGrad = ctx.createLinearGradient(32, 32, 76, 76);
-  logoGrad.addColorStop(0, "#7c3aed");
-  logoGrad.addColorStop(1, "#ec4899");
-  roundRect(ctx, 32, 32, 44, 44, 12);
-  ctx.fillStyle = logoGrad;
-  ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.font = "bold 20px 'Segoe UI', system-ui, sans-serif";
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "center";
-  ctx.fillText("S", 54, 55);
-
-  // Title text
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = "#e0e0ff";
-  ctx.font = "bold 16px 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("Shader DOM", 88, 36);
-  ctx.fillStyle = "#8888bb";
-  ctx.font = "12px 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("React + WebGL", 88, 56);
-
-  // Heading with gradient
-  const headGrad = ctx.createLinearGradient(32, 96, 390, 96);
-  headGrad.addColorStop(0, "#a78bfa");
-  headGrad.addColorStop(0.5, "#ec4899");
-  headGrad.addColorStop(1, "#f59e0b");
-  ctx.fillStyle = headGrad;
-  ctx.font = "800 24px 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("Shaders in React via", 32, 96);
-  ctx.fillText("foreignObject", 32, 124);
-
-  // Description
-  ctx.fillStyle = "#aaaacc";
-  ctx.font = "13px 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("DOM snapshot → SVG foreignObject → Canvas", 32, 160);
-  ctx.fillText("→ WebGL texture → GPU shader. 60fps.", 32, 178);
-
-  // Tags
-  const tags = ["React", "WebGL", "GLSL", "SVG"];
-  let tagX = 32;
-  ctx.font = "600 11px 'Segoe UI', system-ui, sans-serif";
-  tags.forEach((tag) => {
-    const tw = ctx.measureText(tag).width + 20;
-    roundRect(ctx, tagX, 200, tw, 24, 6);
-    ctx.fillStyle = "rgba(124, 58, 237, 0.2)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(124, 58, 237, 0.3)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = "#a78bfa";
-    ctx.fillText(tag, tagX + 10, 207);
-    tagX += tw + 8;
-  });
-
-  // Stats box
-  roundRect(ctx, 32, 240, W - 64, 70, 10);
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  ctx.fillStyle = "#8888bb";
-  ctx.font = "12px 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("Frame Count", 48, 258);
-  ctx.fillStyle = "#7c3aed";
-  ctx.font = "bold 14px 'Courier New', monospace";
-  ctx.textAlign = "right";
-  ctx.fillText(String(counter), W - 48, 258);
-  ctx.textAlign = "left";
-
-  // Progress bar
-  const barW = W - 96;
-  roundRect(ctx, 48, 282, barW, 6, 3);
-  ctx.fillStyle = "rgba(255,255,255,0.06)";
-  ctx.fill();
-
-  const fillW = barW * ((counter % 100) / 100);
-  if (fillW > 0) {
-    const barGrad = ctx.createLinearGradient(48, 0, 48 + fillW, 0);
-    barGrad.addColorStop(0, "#7c3aed");
-    barGrad.addColorStop(1, "#ec4899");
-    roundRect(ctx, 48, 282, Math.max(fillW, 6), 6, 3);
-    ctx.fillStyle = barGrad;
-    ctx.fill();
+function inlineStyles(source, clone) {
+  const computed = window.getComputedStyle(source);
+  for (const key of computed) {
+    clone.style.setProperty(key, computed.getPropertyValue(key));
   }
-
-  ctx.restore();
-  return canvas;
+  for (let i = 0; i < source.children.length; i++) {
+    if (clone.children[i]) {
+      inlineStyles(source.children[i], clone.children[i]);
+    }
+  }
 }
 
 function useDomSnapshot(domRef, deps = []) {
   const [texture, setTexture] = useState(null);
-  const counterRef = useRef(0);
+  const snapshotting = useRef(false);
 
   const snapshot = useCallback(() => {
-    const canvas = renderCardToCanvas(counterRef.current);
-    setTexture(canvas);
-  }, []);
+    const el = domRef.current;
+    if (!el || snapshotting.current) return;
+    snapshotting.current = true;
 
-  const updateCounter = useCallback((c) => {
-    counterRef.current = c;
-  }, []);
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
 
-  return { texture, snapshot, updateCounter };
+    const clone = el.cloneNode(true);
+    inlineStyles(el, clone);
+
+    const xml = new XMLSerializer().serializeToString(clone);
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+      `<foreignObject width="100%" height="100%">${xml}</foreignObject>` +
+      `</svg>`;
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width * 2;
+      canvas.height = height * 2;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(2, 2);
+      ctx.drawImage(img, 0, 0, width, height);
+      setTexture(canvas);
+      snapshotting.current = false;
+    };
+    img.onerror = () => {
+      snapshotting.current = false;
+    };
+    // Data URI instead of blob URL — this is the key to avoiding tainted canvas
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
+  }, [domRef, ...deps]);
+
+  return { texture, snapshot };
 }
 
 // ─── WebGL Renderer ─────────────────────────────────────────
@@ -521,13 +432,8 @@ export default function App() {
   const domRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const { texture, snapshot, updateCounter } = useDomSnapshot(domRef, [counter, shader]);
+  const { texture, snapshot } = useDomSnapshot(domRef, [counter, shader]);
   const { updateTexture } = useWebGLShader(canvasRef, texture, SHADERS[shader].code);
-
-  // Keep canvas renderer in sync with counter
-  useEffect(() => {
-    updateCounter(counter);
-  }, [counter, updateCounter]);
 
   // Live counter update
   useEffect(() => {
@@ -768,10 +674,10 @@ export default function App() {
         >
           {[
             ["React DOM", "#7c3aed"],
-            ["XMLSerializer", "#6366f1"],
-            ["SVG foreignObject", "#8b5cf6"],
-            ["Blob URL", "#a78bfa"],
-            ["Image", "#c084fc"],
+            ["Inline Styles", "#6366f1"],
+            ["XMLSerializer", "#8b5cf6"],
+            ["SVG foreignObject", "#a78bfa"],
+            ["Data URI", "#c084fc"],
             ["Canvas 2D", "#ec4899"],
             ["WebGL texImage2D", "#f43f5e"],
             ["Fragment Shader", "#f59e0b"],
