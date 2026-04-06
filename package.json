@@ -1,4 +1,5 @@
 {
+  "name": "shader-dom",
   "private": true,
   "type": "module",
   "scripts": {
