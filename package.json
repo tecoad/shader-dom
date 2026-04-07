@@ -2,5 +2,8 @@
   "name": "shader-dom",
   "private": true,
   "type": "module",
-  "workspaces": ["demo"]
+  "workspaces": ["packages/*", "demo"],
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.10"
+  }
 }
