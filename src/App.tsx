@@ -43,6 +43,8 @@ export default function App() {
 		document.documentElement.classList.contains("dark")
 	)
 
+	const toggleLive = useCallback(() => setIsLive(v => !v), [])
+
 	const toggleTheme = useCallback(() => {
 		const next = !document.documentElement.classList.contains("dark")
 		document.documentElement.classList.toggle("dark", next)
@@ -134,7 +136,7 @@ export default function App() {
 				<Controls
 					isLive={isLive}
 					snapshotMs={snapshotMs}
-					onToggleLive={() => setIsLive(v => !v)}
+					onToggleLive={toggleLive}
 				/>
 
 				<div>

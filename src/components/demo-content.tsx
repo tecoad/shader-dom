@@ -35,7 +35,12 @@ export function DemoContent({ counter }: { counter: number }) {
 			</div>
 
 			<div className="mb-5">
-				<Button size="lg" variant="solid" onClick={() => setClicks(c => c + 1)}>
+				<Button
+					size="lg"
+					variant="solid"
+					className="hover:bg-accent-a6 active:bg-accent-a4 active:scale-90 transition-all"
+					onClick={() => setClicks(c => c + 1)}
+				>
 					Clicks
 					<span
 						data-slot="icon"
