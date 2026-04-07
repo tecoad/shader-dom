@@ -11,7 +11,7 @@ interface ControlsProps {
 
 export function Controls({ isLive, snapshotMs, onToggleLive }: ControlsProps) {
 	return (
-		<div className="flex gap-3 items-center justify-center flex-wrap">
+		<div className="flex gap-3 items-center justify-center">
 			<Button size="lg" variant="outline" onClick={onToggleLive}>
 				<MorphTransition fixedWidth="center" state={isLive ? "live" : "paused"}>
 					<MorphTransition.State name="live">
@@ -25,7 +25,7 @@ export function Controls({ isLive, snapshotMs, onToggleLive }: ControlsProps) {
 				Snapshot
 				<NumberFlow
 					data-slot="icon"
-					className="px-2 tabular-nums text-xs text-base-contrast opacity-80 font-mono"
+					className="w-18 tabular-nums text-xs text-base-contrast opacity-80 font-mono"
 					value={Number(snapshotMs.toFixed(1))}
 					format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }}
 					suffix=" ms"

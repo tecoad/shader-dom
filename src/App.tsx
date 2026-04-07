@@ -54,7 +54,8 @@ export default function App() {
 	const lastUpdateRef = useRef(0)
 	const handleSnapshotMs = useCallback((ms: number) => {
 		const alpha = 0.1
-		emaRef.current = emaRef.current === 0 ? ms : emaRef.current * (1 - alpha) + ms * alpha
+		emaRef.current =
+			emaRef.current === 0 ? ms : emaRef.current * (1 - alpha) + ms * alpha
 		const now = performance.now()
 		if (now - lastUpdateRef.current > 500) {
 			lastUpdateRef.current = now
@@ -70,7 +71,7 @@ export default function App() {
 	}, [isLive])
 
 	return (
-		<div className="min-h-dvh bg-base-1 flex flex-col px-6">
+		<div className="min-h-dvh bg-base-1 flex flex-col px-6 overflow-x-clip">
 			{/* Header */}
 			<div className="absolute z-20 top-4 right-6 flex gap-2">
 				<Button
