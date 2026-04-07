@@ -6,24 +6,27 @@ Complete technical documentation of everything we discovered building this proto
 
 - [Pipeline Overview](#pipeline-overview)
 - [DOM Snapshot via foreignObject](#dom-snapshot-via-foreignobject)
+- [CSS Embedding in foreignObject](#css-embedding-in-foreignobject)
+- [Dark Mode in foreignObject](#dark-mode-in-foreignobject)
 - [The Tainted Canvas Problem](#the-tainted-canvas-problem)
-- [CSS Isolation in SVG-as-Image](#css-isolation-in-svg-as-image)
-- [Interactive Mode (PDF.js Pattern)](#interactive-mode-pdfjs-pattern)
+- [Interactive Mode — Three Layer Architecture](#interactive-mode--three-layer-architecture)
+- [Hover & Active States](#hover--active-states)
+- [CSS Transitions in Snapshots](#css-transitions-in-snapshots)
 - [Text Selection Through Shaders](#text-selection-through-shaders)
+- [Form State Sync](#form-state-sync)
 - [Canvas Sizing (Retina)](#canvas-sizing-retina)
-- [box-sizing Inside foreignObject](#box-sizing-inside-foreignobject)
 - [WebGL Renderer](#webgl-renderer)
 - [Current File Structure](#current-file-structure)
 - [Current Code Reference](#current-code-reference)
+- [Gotchas Reference](#gotchas-reference)
 - [Target API Design](#target-api-design)
-- [Migration Notes](#migration-notes)
 
 ---
 
 ## Pipeline Overview
 
 ```
-React DOM → cloneNode → XMLSerializer → SVG foreignObject → Data URI → Image → Canvas 2D (2x) → WebGL texImage2D → Fragment Shader (60fps)
+React DOM → getComputedStyle (hover/active) → cloneNode → syncFormState → CSS embedding (CDATA) → SVG foreignObject → Data URI → Image → Canvas 2D (2x) → WebGL texImage2D → Fragment Shader (60fps)
 ```
 
 The snapshot captures the real DOM (not a Canvas 2D redraw). The shader runs on the GPU and animates independently — the texture only updates when the DOM changes.
@@ -36,162 +39,242 @@ The core technique: serialize a DOM subtree into an SVG `<foreignObject>`, load 
 const clone = el.cloneNode(true);
 const xml = new XMLSerializer().serializeToString(clone);
 const svgString =
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
   `<foreignObject width="100%" height="100%">` +
-  `<style xmlns="http://www.w3.org/1999/xhtml">* { margin: 0; padding: 0; box-sizing: border-box; }</style>` +
-  `${xml}</foreignObject>` +
-  `</svg>`;
-
-const img = new Image();
-img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
+  `<html xmlns="http://www.w3.org/1999/xhtml">` +
+  `<head><style><![CDATA[${css}]]></style></head>` +
+  `<body>${xml}</body>` +
+  `</html>` +
+  `</foreignObject></svg>`;
 ```
 
 Key details:
-- `cloneNode(true)` copies all HTML attributes including inline `style`, but NOT computed styles from CSS classes/stylesheets
+- `cloneNode(true)` copies all HTML attributes including inline `style`, but NOT computed styles or DOM properties (`.value`, `.checked`)
 - `XMLSerializer` produces valid XHTML from the clone
-- The clone is independent — modifying the live DOM after cloning doesn't affect the snapshot
-- Snapshot takes <16ms on desktop (fits in one frame)
+- The SVG wraps content in `<html><body>` so `:root` CSS selectors resolve correctly
+- Snapshot takes ~0.5ms on desktop without hover, ~2ms with hover (fits in one frame)
+
+## CSS Embedding in foreignObject
+
+SVG-as-image is fully sandboxed — **zero access** to host document stylesheets, external resources, fonts, or JavaScript.
+
+### The solution
+
+Extract all page CSS via `document.styleSheets` → `rule.cssText` and embed inside the SVG:
+
+```js
+let css = "";
+for (const sheet of document.styleSheets) {
+  for (const rule of sheet.cssRules) {
+    css += rule.cssText;
+  }
+}
+```
+
+The CSS string is wrapped in `<![CDATA[...]]>` inside the `<style>` element. This is critical — CSS selectors contain characters like `>` that would break the XML parser without CDATA.
+
+### What this enables
+- All CSS classes (Tailwind, any framework) work in the snapshot
+- CSS custom properties (`var()`) resolve correctly
+- `@layer` ordering is preserved
+- `@media` queries evaluate in the SVG context
+
+### Caching
+The CSS is extracted once on mount and cached in a `ref`. Re-extraction is only needed if stylesheets change at runtime (rare).
+
+## Dark Mode in foreignObject
+
+### The problem
+`:root` in an SVG document matches `<svg>` (the document root), NOT `<html>` inside `<foreignObject>`. Radix UI defines light mode on `:root` and dark mode on `.dark`:
+
+```css
+:root { --sand-1: #fdfdfc; }      /* light — matches <svg> */
+.dark { --sand-1: #111110; }      /* dark — needs to match <svg> too */
+```
+
+Without intervention, `:root` always wins because `.dark` is on `<html>`, a different element from `<svg>`.
+
+### The solution
+Add `class="dark"` to BOTH `<svg>` and `<html>`:
+
+```js
+const svgClass = isDark ? ' class="dark"' : "";
+`<svg ...${svgClass}>` +
+`<html ...${svgClass}>` +
+```
+
+`.dark` on `<svg>` overrides `:root` on `<svg>` by source order (same specificity). Dark mode custom properties cascade through `<foreignObject>` → `<html>` → content.
+
+### Approaches we tried and rejected
+- **Resolving computed values via getComputedStyle** — worked but added unnecessary complexity. The `.dark` class approach is simpler and handles the cascade natively.
+- **Re-extracting CSS on theme change** — unnecessary since the CSS rules already contain both light and dark definitions.
 
 ## The Tainted Canvas Problem
 
-When you draw an image onto a Canvas and then try to read it via WebGL `texImage2D`, the browser checks if the canvas is "origin-clean". If the image source is cross-origin or security-sensitive, the canvas becomes **tainted** and `texImage2D` throws `SecurityError`.
-
-### What taints the canvas
+When drawing an image onto Canvas and reading via WebGL `texImage2D`, the browser checks if the canvas is "origin-clean". foreignObject content in blob URLs taints the canvas in Safari.
 
 | Image source | Contains foreignObject | Tainted? |
 |---|---|---|
 | `blob:` URL | Yes | **YES** (Safari, older Chrome) |
 | `data:` URI | Yes | **NO** (all browsers) |
-| `http://` URL | Yes | **YES** (all browsers) |
 
-### The fix
+**Always use data URIs for foreignObject snapshots.**
 
-Use a data URI, not a blob URL:
+## Interactive Mode — Three Layer Architecture
+
+```
+┌──────────────────────────────┐
+│ DOM Overlay (z-index: 3)     │  ← opacity: 0, catches all events
+├──────────────────────────────┤
+│ Selection Layer (z-index: 2) │  ← positioned divs via getClientRects()
+├──────────────────────────────┤
+│ Canvas (z-index: 1)          │  ← shader output, pointer-events: none
+└──────────────────────────────┘
+```
+
+### Why opacity: 0 (not background: transparent !important)
+
+We tried several approaches for making the overlay invisible:
+
+| Approach | getComputedStyle | ::selection | Hover/transitions |
+|---|---|---|---|
+| `opacity: 0` | Real values ✓ | Hidden ✗ | Work ✓ |
+| `background: transparent !important` | Returns transparent ✗ | Visible ✓ | Broken ✗ |
+| `visibility: hidden` | Real values ✓ | No interaction ✗ | No events ✗ |
+
+`opacity: 0` wins because `getComputedStyle` on children returns real CSS values (opacity is a compositing property on the parent, doesn't affect children's computed styles). This enables hover state capture and CSS transition reading.
+
+The `::selection` problem is solved by the separate selection layer (see below).
+
+### Why NOT canvas on top?
+If the canvas is on top (`pointer-events: none`, events pass through):
+- Text selection highlight renders on the DOM BELOW the opaque canvas — invisible
+- No CSS mechanism to make selection "punch through" an opaque element above it
+
+### Why NOT temporarily toggling the overlay class?
+We tried removing `interactive-overlay` temporarily to read `getComputedStyle` without interference. Two problems:
+1. **With async pipelines** (like modern-screenshot): the browser paints the intermediate state — visible flash
+2. **With sync pipelines**: `transition-all` on elements causes CSS transitions from the old state (transparent) to the new state. `getComputedStyle` reads t=0 of the transition (the old value), not the target value. Even `transition: none !important` on all elements didn't fully prevent this in practice.
+
+## Hover & Active States
+
+### The problem
+CSS pseudo-classes (`:hover`, `:active`) are browser-internal state — not part of the DOM. `cloneNode` copies the DOM tree (classes, attributes, text), NOT the rendering engine state. Cloned elements never have `:hover`.
+
+This is fundamentally different from React state changes (counter, clicks) which modify the actual DOM and are captured by `cloneNode`.
+
+### The solution
+For each hovered/active element, read `getComputedStyle` from the **original** DOM (which HAS `:hover` state) and apply visual properties as inline styles on the **clone** (which is detached — zero style recalc cost):
 
 ```js
-// TAINTS — blob URL
-const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-img.src = URL.createObjectURL(blob);
+const hovered = original.querySelectorAll(":hover");
+const origAll = [...original.querySelectorAll("*")];
+const cloneAll = [...clone.querySelectorAll("*")];
 
-// DOES NOT TAINT — data URI (same-origin in all browsers)
-img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
-```
-
-Data URIs are treated as same-origin because they are embedded directly — no network fetch, no cross-origin risk.
-
-### Browser status
-
-- Chrome 131+ also fixed blob URLs (no longer taint)
-- Firefox: blob URLs never tainted
-- Safari: blob URLs still taint as of 2026 — **must use data URI**
-
-## CSS Isolation in SVG-as-Image
-
-This is a critical property we exploit for interactive mode.
-
-When SVG is loaded as an image (via data URI or blob URL for `drawImage()`):
-- **Host document stylesheets are completely inaccessible**
-- Only inline `<style>` blocks within the SVG and inline `style` attributes work
-- External resources (fonts, images) are blocked
-- JavaScript is disabled
-
-This means:
-- `cloneNode(true)` copies the `class` attribute, but the CSS rules for that class don't exist in the SVG context
-- Only inline `style` attributes produce visual effects in the snapshot
-- We can freely add CSS classes to the live DOM (like `.interactive-overlay`) without affecting the snapshot
-
-**Important:** If the component uses CSS classes or external stylesheets for visual styling (not just inline styles), those styles won't appear in the snapshot. Components must use inline styles for anything that should be captured.
-
-## Interactive Mode (PDF.js Pattern)
-
-Inspired by how PDF.js overlays selectable text on canvas-rendered PDFs.
-
-### Architecture
-
-```
-┌─────────────────────────────┐
-│ DOM (z-index: 2)            │  ← interactive, visually transparent
-│ class="interactive-overlay" │     pointer-events: all
-│ color: transparent          │     text selectable
-│ background: transparent     │     buttons clickable
-├─────────────────────────────┤
-│ Canvas (z-index: 1)         │  ← shader output, visual layer
-│ pointer-events: none        │     60fps GPU rendering
-└─────────────────────────────┘
-```
-
-The DOM is on TOP, the canvas is BELOW. The DOM is fully interactive (clicks, hover, selection, tab navigation). The canvas just shows the shader effect. Since the DOM is transparent, the shader shows through.
-
-### Why DOM on top, not canvas on top?
-
-If the canvas is on top with `pointer-events: none`:
-- Clicks pass through, but text selection highlight renders BELOW the opaque canvas — invisible
-- Scroll, drag, and other complex interactions can be unreliable
-
-With DOM on top:
-- All interactions are native (browser handles everything)
-- Selection highlight renders on top of the shader — visible
-- No `pointer-events` tricks needed on the canvas
-
-### CSS for transparency
-
-```css
-.interactive-overlay {
-  color: transparent !important;
-  -webkit-text-fill-color: transparent !important;
-}
-.interactive-overlay * {
-  background: transparent !important;
-  background-image: none !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-  outline-color: transparent !important;
-  text-shadow: none !important;
+for (const target of hovered) {
+  const idx = origAll.indexOf(target);
+  const clonedEl = cloneAll[idx];
+  const computed = getComputedStyle(target);
+  for (const prop of VISUAL_PROPS) {
+    clonedEl.style.setProperty(prop, computed.getPropertyValue(prop));
+  }
 }
 ```
 
-`!important` is required because we need to override inline styles on child elements (inline styles have specificity `1,0,0,0` which beats any selector).
+### Why only VISUAL_PROPS?
+Inlining ALL ~300 computed properties breaks layout — computed values are absolute (`width: 85.5px` instead of `auto`), which breaks flexbox, auto margins, and responsive sizing. Only visual properties are safe to inline:
 
-### Why this doesn't break the snapshot
+```js
+const VISUAL_PROPS = [
+  "background-color", "background-image", "background",
+  "color", "opacity",
+  "transform", "scale", "rotate", "translate",
+  "box-shadow", "border-color",
+  "outline", "outline-color", "outline-offset",
+  "text-shadow", "text-decoration-color",
+  "filter", "backdrop-filter",
+];
+```
 
-The snapshot uses `cloneNode(true)` which copies inline `style` attributes (the real colors, backgrounds, gradients). The `class="interactive-overlay"` is also copied, but inside the SVG-as-image context, no stylesheet defines `.interactive-overlay`, so the class has no effect. The snapshot renders with full visual fidelity.
+Layout comes from the embedded CSS (Tailwind classes). Visual hover state comes from getComputedStyle. Each mechanism does what it does best.
 
-We also call `clone.classList.remove("interactive-overlay")` as a safety measure.
+### Performance
+- `querySelectorAll(":hover")` returns 1-3 elements (the hover chain)
+- Reading ~17 properties via `getComputedStyle` per element is negligible
+- Writing to detached clone elements is free (no layout/style recalc)
+- Total overhead: ~1-2ms per frame during hover
+
+### Approaches we tried and rejected
+- **CSS rewriting (`:hover` → `[data-hover]`)** — worked for hover but required walking the CSSOM tree to handle Tailwind v4's CSS nesting (`CSSNestedDeclarations` inside `@media(hover:hover)` inside `@layer`). Complex and didn't support transitions.
+- **modern-screenshot library** — creates an iframe per snapshot, not designed for 60fps. Caused iframe flashing.
+- **Full getComputedStyle on ALL elements** — 300 props × 30 elements = 9000 setProperty calls per frame. Too slow (~44ms) and breaks layout.
+
+## CSS Transitions in Snapshots
+
+### The problem
+Each snapshot creates a new SVG document from scratch. Elements in frame N have no relationship to frame N-1. CSS transitions require persistent elements that transition between states — impossible with per-frame SVG recreation.
+
+### How transitions work anyway
+`getComputedStyle` returns **intermediate transition values**. When a CSS transition is in progress on the live DOM, reading `getComputedStyle(el).backgroundColor` returns the current interpolated value (not the start or end). Since we read from the live DOM and apply to the clone, the transition is effectively "sampled" each frame.
+
+The transition runs on the live DOM (via CSS `transition-all`). The snapshot captures each frame of the transition via `getComputedStyle`. The result is smooth animation in the shader output.
+
+### Requirement
+This only works with `opacity: 0` on the overlay. The `background: transparent !important` approach prevents transitions because it overrides the target value — there's nothing to transition to.
 
 ## Text Selection Through Shaders
 
 ### The problem
+`opacity: 0` hides `::selection` highlights. CSS `opacity` composites the entire element (including pseudo-elements) as one atomic group — `::selection` cannot escape the parent's opacity.
 
-`opacity: 0` hides the `::selection` highlight too (opacity applies to the entire composite). `visibility: hidden` prevents selection entirely.
+### Approaches we evaluated
 
-### The solution
+| Approach | Works? | Why/why not |
+|---|---|---|
+| CSS Custom Highlight API (`::highlight()`) | No | Paints inside the opacity compositing group |
+| `::selection` with `opacity: 1` override | No | `opacity` not allowed in `::selection` |
+| `mix-blend-mode` tricks | No | Zero-alpha content produces nothing regardless of blend mode |
+| `visibility: hidden` + visible children | No | Prevents text selection entirely |
+| Duplicate text layer | Partially | Fragile synchronization, pointer-events conflicts |
+| Dynamic opacity switching | Partially | Hover breaks during selection (getComputedStyle returns transparent) |
+| **getClientRects() overlay** | **Yes** | Fully decoupled from overlay opacity |
 
-`color: transparent` with `opacity: 1`. The element is fully opaque (so `::selection` renders normally), but the text color is invisible (so the shader shows through).
+### The solution: getClientRects() selection layer
 
-```css
-.interactive-overlay ::selection {
-  background: rgba(100, 130, 255, 0.35);
-  color: transparent;
-  -webkit-text-fill-color: transparent;
+A separate div layer (z-index: 2, between canvas and overlay) renders selection highlights as positioned divs:
+
+1. `selectionchange` event fires when selection changes
+2. `Range.getClientRects()` returns geometry for each selected line — works on `opacity: 0` elements because it reads from layout, not rendering
+3. Positioned divs with `background: rgba(100, 130, 255, 0.35)` are placed at the selection coordinates
+4. A div pool avoids DOM creation/destruction per event
+
+### Tradeoff
+Selection highlights are not pixel-perfect native (no OS-specific rounded corners or squish effects). But they work consistently, don't conflict with hover, and are independent of the overlay opacity mechanism.
+
+## Form State Sync
+
+`cloneNode(true)` copies HTML **attributes** but not DOM **properties**:
+
+| What | Attribute (copied) | Property (not copied) |
+|---|---|---|
+| Input text | `value="initial"` | `.value = "user typed"` |
+| Checkbox | `checked` (initial) | `.checked = true` (runtime) |
+| Textarea | — | `.value = "content"` |
+| Select | — | `.selectedIndex = 2` |
+| Scroll | — | `.scrollTop = 150` |
+
+The `syncFormState` function copies these properties from original to clone before serialization:
+
+```js
+function syncFormState(original, clone) {
+  const origInputs = original.querySelectorAll("input, textarea, select");
+  const cloneInputs = clone.querySelectorAll("input, textarea, select");
+  for (let i = 0; i < origInputs.length; i++) {
+    // Copy .value, .checked, .selectedIndex, .textContent
+  }
+  // Also sync scrollTop/scrollLeft on scrollable elements
 }
 ```
-
-### Safari fix
-
-Safari ignores `color: transparent` inside `::selection` and shows white text. The fix is to also set `-webkit-text-fill-color: transparent` in the `::selection` rule. Both `color` and `-webkit-text-fill-color` must be transparent.
-
-### Properties allowed in `::selection`
-
-Only these CSS properties work inside `::selection`:
-- `color`
-- `background-color`
-- `text-decoration`
-- `text-shadow`
-- `-webkit-text-fill-color`
-- `-webkit-text-stroke-color`
-- `-webkit-text-stroke-width`
-
-Notably, `background-image` is ignored in `::selection`.
 
 ## Canvas Sizing (Retina)
 
@@ -207,93 +290,47 @@ ctx.drawImage(img, 0, 0, width, height);
 The WebGL canvas must set CSS dimensions to half the buffer size:
 
 ```js
-canvas.width = texture.width;   // 840 (internal pixels)
-canvas.height = texture.height; // 680 (internal pixels)
-canvas.style.width = (texture.width / 2) + "px";   // 420 CSS px
-canvas.style.height = (texture.height / 2) + "px";  // 340 CSS px
+canvas.style.width = (texture.width / 2) + "px";
+canvas.style.height = (texture.height / 2) + "px";
 ```
-
-Without explicit CSS height, the canvas defaults to its `height` attribute value in CSS pixels (e.g., 680px instead of 340px), distorting the aspect ratio and making text appear to wrap differently.
-
-## box-sizing Inside foreignObject
-
-The host document's `* { box-sizing: border-box }` rule doesn't apply inside foreignObject (SVG-as-image has no access to host stylesheets). The default is `content-box`.
-
-If a component uses `width: 420` and `padding: 32`:
-- With `border-box`: total width = 420px, content = 356px
-- With `content-box`: total width = 484px, content = 420px
-
-Text wraps at different widths, causing visible layout differences between DOM and shader.
-
-### Fix
-
-Inject the CSS reset inside the SVG:
-
-```js
-const svgString =
-  `<svg ...>` +
-  `<foreignObject width="100%" height="100%">` +
-  `<style xmlns="http://www.w3.org/1999/xhtml">* { margin: 0; padding: 0; box-sizing: border-box; }</style>` +
-  `${xml}</foreignObject>` +
-  `</svg>`;
-```
-
-Any global CSS that affects layout must be duplicated inside the SVG.
 
 ## WebGL Renderer
-
-### Setup
 
 - WebGL 1 (`canvas.getContext("webgl")`)
 - Full-screen quad (triangle strip, 4 vertices)
 - Vertex shader passes through position and texture coordinates
-- Fragment shader receives `u_texture` (the DOM snapshot), `u_time`, and `u_resolution`
-
-### Render loop
-
-The shader runs at 60fps via `requestAnimationFrame`. The texture updates only when the DOM changes (new snapshot). The shader animates via `u_time` uniform.
-
-### Cleanup
-
-On unmount or shader change, all GL resources are deleted:
-```js
-cancelAnimationFrame(rafRef.current);
-gl.deleteTexture(glTex);
-gl.deleteProgram(program);
-gl.deleteShader(vs);
-gl.deleteShader(fs);
-```
-
-### Vertex shader (shared)
-
-```glsl
-attribute vec2 a_position;
-attribute vec2 a_texCoord;
-varying vec2 v_texCoord;
-void main() {
-  gl_Position = vec4(a_position, 0.0, 1.0);
-  v_texCoord = a_texCoord;
-}
-```
-
-### Fragment shader uniforms
-
-| Uniform | Type | Description |
-|---|---|---|
-| `u_texture` | `sampler2D` | The DOM snapshot texture |
-| `u_time` | `float` | Elapsed seconds since start |
-| `u_resolution` | `vec2` | Canvas pixel dimensions |
+- Fragment shader receives `u_texture`, `u_time`, `u_resolution`
+- Render loop at 60fps via `requestAnimationFrame`
+- Texture updates only when snapshot changes (new `setTexture`)
 
 ## Current File Structure
 
 ```
 shader-dom/
-├── index.html          # Entry point + interactive-overlay CSS
-├── main.jsx            # React bootstrap
-├── shader-dom.jsx      # All logic: snapshot, WebGL, shaders, UI
-├── package.json        # Vite + React 18
-├── vite.config.js      # Vite + @vitejs/plugin-react
-└── README.md           # Public-facing docs
+├── index.html                     # Entry point + interactive-overlay CSS
+├── public/fonts/                  # InterVariable.woff2, GeistMono.woff2
+├── src/
+│   ├── main.tsx                   # React entry
+│   ├── App.tsx                    # Page composition (header, headline, demo, controls)
+│   ├── style.css                  # Tailwind imports, base layer, custom variants
+│   ├── theme.css                  # Radix color tokens (Sand + Orange), radius system
+│   ├── fonts.css                  # @font-face declarations
+│   ├── components/
+│   │   ├── button.tsx             # CVA button with solid/ghost/outline variants
+│   │   ├── fit-headline.tsx       # Responsive headline (container query + motion)
+│   │   ├── inset-shadow.tsx       # SVG filter inset shadow
+│   │   ├── demo-content.tsx       # Demo card (snapshotted content)
+│   │   ├── shader-demo.tsx        # Canvas + overlay + snapshot orchestration
+│   │   ├── shader-selector.tsx    # Shader button row
+│   │   ├── controls.tsx           # Live/paused toggle + performance badge
+│   │   └── pipeline-diagram.tsx   # Visual pipeline representation
+│   ├── hooks/
+│   │   ├── use-dom-snapshot.ts    # DOM → foreignObject → canvas texture
+│   │   ├── use-webgl-shader.ts    # WebGL setup, shader compilation, render loop
+│   │   └── use-selection-highlight.ts  # Text selection via getClientRects
+│   └── lib/
+│       ├── shaders.ts             # GLSL shader definitions
+│       └── utils.ts               # cn() utility
 ```
 
 ## Current Code Reference
@@ -302,16 +339,9 @@ shader-dom/
 
 | Hook | Purpose | Key detail |
 |---|---|---|
-| `useDomSnapshot(domRef, deps)` | Clone DOM → foreignObject SVG → data URI → Canvas | Returns `{ texture, snapshot }` |
+| `useDomSnapshot(domRef, deps)` | CSS embedding + getComputedStyle (hover) + clone + foreignObject | Returns `{ texture, snapshot }` |
 | `useWebGLShader(canvasRef, texture, shaderCode)` | Compile shader, upload texture, render loop | Returns `{ updateTexture }` |
-
-### Components
-
-| Component | Purpose |
-|---|---|
-| `DemoContent` | The demo card being snapshotted (inline styles, interactive buttons) |
-| `InteractiveButton` | Button with hover/press states via React state (captured in snapshot) |
-| `App` | Orchestrates everything: shader selector, controls, layout modes |
+| `useSelectionHighlight(containerRef, highlightRef)` | Render selection highlights via getClientRects | Manages div pool, listens to selectionchange |
 
 ### Shaders (5 built-in)
 
@@ -322,6 +352,25 @@ shader-dom/
 | `glitch` | Glitch | Random horizontal shifts + color separation |
 | `pixelate` | Pixelate + Glow | Dynamic pixel grid with bloom |
 | `hologram` | Hologram | Scanlines, flicker, cyan tint |
+
+## Gotchas Reference
+
+| Issue | Cause | Fix |
+|---|---|---|
+| `SecurityError: tainted canvas` | Blob URL with foreignObject | Use data URI |
+| Snapshot layout differs from DOM | Missing `box-sizing: border-box` in foreignObject | CSS embedding includes Tailwind's base reset |
+| CSS classes don't work in snapshot | SVG-as-image has no access to host stylesheets | Embed all CSS via `document.styleSheets` + CDATA |
+| Dark mode doesn't work in snapshot | `:root` matches `<svg>`, not `<html>` in foreignObject | Add `class="dark"` to `<svg>` element |
+| `:hover` not captured in snapshot | Pseudo-classes are browser state, not DOM | getComputedStyle on original → inline on clone |
+| getComputedStyle returns transparent | `background: transparent !important` on overlay | Use `opacity: 0` instead |
+| CSS transitions not captured | `!important` overrides prevent transitions | `opacity: 0` preserves real computed values |
+| Transition reads t=0 value | Toggling overlay class triggers CSS transition | Don't toggle classes — use `opacity: 0` permanently |
+| All computed styles break layout | Inlining width/height/padding overrides flexbox | Only inline VISUAL_PROPS (colors, transforms, shadows) |
+| getComputedStyle slow (44ms) | Setting 300 props on LIVE DOM elements | Apply to detached CLONE instead (zero style recalc) |
+| `::selection` hidden | `opacity: 0` composites entire element including pseudo-elements | Separate selection layer via getClientRects() divs |
+| Input values not in snapshot | `cloneNode` copies attributes, not `.value` property | `syncFormState` copies runtime properties to clone |
+| External fonts missing | SVG-as-image blocks external resources | Embed fonts via CSS embedding (page stylesheets include @font-face) |
+| modern-screenshot iframe flash | Library creates/destroys iframe per snapshot at 60fps | Don't use screenshot libraries for real-time — use custom pipeline |
 
 ---
 
@@ -353,51 +402,11 @@ function App() {
 }
 ```
 
-### Components to build
-
-| Component | Responsibility |
-|---|---|
-| `<Canvas>` | Creates WebGL context, manages render loop, provides `u_time`/`u_resolution` uniforms |
-| `<Snapshot>` | Renders children to DOM, runs foreignObject snapshot pipeline, provides texture to parent `<Canvas>` |
-| `glsl.fragment` | Tagged template literal that compiles GLSL, interpolates `<Snapshot>` as `sampler2D` uniforms |
-
 ### Key design decisions needed
 
 1. **How does `<Snapshot>` communicate the texture to `<Canvas>`?** Context? Ref? Callback?
 2. **How does `glsl.fragment` map JSX interpolations to shader uniforms?** Each `<Snapshot>` becomes a `sampler2D`, each number becomes a `float`, etc.
-3. **Interactive mode** — should `<Snapshot interactive>` automatically apply the overlay pattern? Or is it a separate wrapper?
+3. **Interactive mode** — should `<Snapshot interactive>` automatically apply the three-layer overlay pattern?
 4. **Multiple snapshots** — can a shader combine textures from multiple `<Snapshot>` components?
 5. **Custom uniforms** — how to pass `u_mouse`, scroll position, or React state as shader uniforms?
 6. **Snapshot frequency** — every frame? On DOM change (MutationObserver)? Manual trigger?
-
-## Migration Notes
-
-### What to preserve from the prototype
-
-- **Data URI approach** for foreignObject (not blob URL) — critical for Safari
-- **CSS reset injection** inside SVG (`box-sizing: border-box`, `margin: 0`, `padding: 0`)
-- **`clone.classList.remove()`** to strip transparency classes from snapshot clones
-- **Retina handling** (2x canvas with explicit CSS width/height at 1x)
-- **Interactive overlay CSS pattern** — `color: transparent` + `::selection` with explicit colors
-- **Safari `::selection` fix** — both `color: transparent` and `-webkit-text-fill-color: transparent`
-- **Canvas CSS dimensions** must be set explicitly (not just `width: 100%`) to match DOM size
-
-### What can be improved
-
-- **No `inlineStyles` needed** if components use inline styles — but a general-purpose `<Snapshot>` should support components with CSS classes. Consider optional style inlining.
-- **Snapshot frequency** — current prototype snapshots every frame. For the API, default to snapshotting on DOM changes (MutationObserver + ResizeObserver) and expose a manual trigger.
-- **WebGL 2** — the prototype uses WebGL 1. The API could target WebGL 2 for `texture()` instead of `texture2D()`, and for features like multiple render targets.
-- **Shader compilation caching** — recompile only when shader code changes, not on every texture update.
-- **OffscreenCanvas** — move snapshot rendering to a worker for better perf on complex DOMs.
-
-### Gotchas to remember
-
-| Issue | Cause | Fix |
-|---|---|---|
-| `SecurityError: tainted canvas` | Blob URL with foreignObject | Use data URI |
-| Snapshot layout differs from DOM | Missing `box-sizing: border-box` in foreignObject | Inject `<style>` in SVG |
-| Text visible during selection (Safari) | Safari ignores `color: transparent` in `::selection` | Add `-webkit-text-fill-color: transparent` |
-| Canvas aspect ratio distorted | CSS height not set (defaults to buffer height) | Set `canvas.style.height` explicitly |
-| External fonts missing in snapshot | SVG-as-image blocks external resources | Embed fonts as base64 in SVG `<style>` |
-| CSS classes don't work in snapshot | SVG-as-image has no access to host stylesheets | Use inline styles or inject `<style>` in SVG |
-| `opacity: 0` hides selection highlight | Opacity applies to entire composite including `::selection` | Use `color: transparent` instead |

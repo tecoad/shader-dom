@@ -1,0 +1,101 @@
+@import "@radix-ui/themes/tokens/colors/sand.css";
+@import "@radix-ui/themes/tokens/colors/orange.css";
+
+@theme {
+	--color-*: initial;
+
+	/* Radius */
+	--radius: 0.45rem;
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+	--radius-2xl: calc(var(--radius) + 8px);
+	--radius-3xl: calc(var(--radius) + 12px);
+	--radius-4xl: calc(var(--radius) + 16px);
+	--radius-5xl: calc(var(--radius) + 20px);
+	--radius-6xl: calc(var(--radius) + 24px);
+	--radius-7xl: calc(var(--radius) + 28px);
+
+	--color-base-1: var(--sand-1);
+	--color-base-2: var(--sand-2);
+	--color-base-3: var(--sand-3);
+	--color-base-4: var(--sand-4);
+	--color-base-5: var(--sand-5);
+	--color-base-6: var(--sand-6);
+	--color-base-7: var(--sand-7);
+	--color-base-8: var(--sand-8);
+	--color-base-9: var(--sand-9);
+	--color-base-10: var(--sand-10);
+	--color-base-11: var(--sand-11);
+	--color-base-12: var(--sand-12);
+	--color-base-a1: var(--sand-a1);
+	--color-base-a2: var(--sand-a2);
+	--color-base-a3: var(--sand-a3);
+	--color-base-a4: var(--sand-a4);
+	--color-base-a5: var(--sand-a5);
+	--color-base-a6: var(--sand-a6);
+	--color-base-a7: var(--sand-a7);
+	--color-base-a8: var(--sand-a8);
+	--color-base-a9: var(--sand-a9);
+	--color-base-a10: var(--sand-a10);
+	--color-base-a11: var(--sand-a11);
+	--color-base-a12: var(--sand-a12);
+	--color-base-surface: var(--sand-surface);
+	--color-base-contrast: var(--sand-contrast);
+
+	--color-accent-1: var(--orange-1);
+	--color-accent-2: var(--orange-2);
+	--color-accent-3: var(--orange-3);
+	--color-accent-4: var(--orange-4);
+	--color-accent-5: var(--orange-5);
+	--color-accent-6: var(--orange-6);
+	--color-accent-7: var(--orange-7);
+	--color-accent-8: var(--orange-8);
+	--color-accent-9: var(--orange-9);
+	--color-accent-10: var(--orange-10);
+	--color-accent-11: var(--orange-11);
+	--color-accent-12: var(--orange-12);
+	--color-accent-a1: var(--orange-a1);
+	--color-accent-a2: var(--orange-a2);
+	--color-accent-a3: var(--orange-a3);
+	--color-accent-a4: var(--orange-a4);
+	--color-accent-a5: var(--orange-a5);
+	--color-accent-a6: var(--orange-a6);
+	--color-accent-a7: var(--orange-a7);
+	--color-accent-a8: var(--orange-a8);
+	--color-accent-a9: var(--orange-a9);
+	--color-accent-a10: var(--orange-a10);
+	--color-accent-a11: var(--orange-a11);
+	--color-accent-a12: var(--orange-a12);
+	--color-accent-surface: var(--orange-surface);
+	--color-accent-contrast: var(--orange-contrast);
+
+	--color-black-a1: rgba(0, 0, 0, 0.05);
+	--color-black-a2: rgba(0, 0, 0, 0.1);
+	--color-black-a3: rgba(0, 0, 0, 0.15);
+	--color-black-a4: rgba(0, 0, 0, 0.2);
+	--color-black-a5: rgba(0, 0, 0, 0.3);
+	--color-black-a6: rgba(0, 0, 0, 0.4);
+	--color-black-a7: rgba(0, 0, 0, 0.5);
+	--color-black-a8: rgba(0, 0, 0, 0.6);
+	--color-black-a9: rgba(0, 0, 0, 0.7);
+	--color-black-a10: rgba(0, 0, 0, 0.8);
+	--color-black-a11: rgba(0, 0, 0, 0.9);
+	--color-black-a12: rgba(0, 0, 0, 0.95);
+	--color-black: rgba(0, 0, 0, 1);
+
+	--color-white-a1: rgba(255, 255, 255, 0.05);
+	--color-white-a2: rgba(255, 255, 255, 0.1);
+	--color-white-a3: rgba(255, 255, 255, 0.15);
+	--color-white-a4: rgba(255, 255, 255, 0.2);
+	--color-white-a5: rgba(255, 255, 255, 0.3);
+	--color-white-a6: rgba(255, 255, 255, 0.4);
+	--color-white-a7: rgba(255, 255, 255, 0.5);
+	--color-white-a8: rgba(255, 255, 255, 0.6);
+	--color-white-a9: rgba(255, 255, 255, 0.7);
+	--color-white-a10: rgba(255, 255, 255, 0.8);
+	--color-white-a11: rgba(255, 255, 255, 0.9);
+	--color-white-a12: rgba(255, 255, 255, 0.95);
+	--color-white: rgba(255, 255, 255, 1);
+}

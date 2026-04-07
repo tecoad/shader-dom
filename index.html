@@ -4,27 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Shader DOM</title>
+  <script>
+    (function() {
+      var t = localStorage.getItem("theme");
+      if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+    })();
+  </script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #08080f; }
-
-    /* Interactive mode: DOM on top of canvas, visually transparent */
+    /* Interactive overlay: opacity: 0 always.
+       getComputedStyle returns real values, hover/transitions work.
+       Selection highlight is rendered via JS (getClientRects). */
     .interactive-overlay {
-      color: transparent !important;
-      -webkit-text-fill-color: transparent !important;
-    }
-    .interactive-overlay * {
-      background: transparent !important;
-      background-image: none !important;
-      border-color: transparent !important;
-      box-shadow: none !important;
-      outline-color: transparent !important;
-      text-shadow: none !important;
-    }
-    .interactive-overlay ::selection {
-      background: rgba(100, 130, 255, 0.35);
-      color: transparent;
-      -webkit-text-fill-color: transparent;
+      opacity: 0;
     }
     .interactive-overlay button {
       cursor: pointer;
@@ -33,6 +26,6 @@
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/main.jsx"></script>
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

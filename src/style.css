@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import "./fonts.css";
+@import "./theme.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@custom-variant icon-only (&:is(
+		[data-content-type="icon-only"],
+		:has([data-content-type="icon-only"])
+	));
+@custom-variant with-icon (&:is(
+		[data-content-type="with-icon"],
+		:has([data-content-type="with-icon"])
+	));
+
+
+
+@utility hide-scrollbar {
+	-ms-overflow-style: none;
+	scrollbar-width: none;
+
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}
+
+@utility padding-mask {
+	mask:
+		linear-gradient(black, black) content-box,
+		linear-gradient(black, black);
+	mask-composite: exclude;
+}
+
+@layer utilities {
+	@property --angle {
+		initial-value: 180deg;
+		inherits: true;
+		syntax: "<angle>";
+	}
+	@property --color {
+		initial-value: white;
+		inherits: true;
+		syntax: "<color>";
+	}
+}
+
+@layer base {
+	* {
+		@apply border-base-6 outline-base-a8;
+		@apply supports-[corner-shape:squircle]:[--radius:1rem];
+		@apply [corner-shape:squircle];
+	}
+	*::before,
+	*::after {
+		@apply [corner-shape:squircle];
+	}
+
+	html {
+		@apply text-base;
+	}
+
+	body {
+		@apply bg-base-1 text-base-12 antialiased font-sans;
+	}
+
+	button:not(:disabled),
+	[role="button"]:not(:disabled) {
+		cursor: pointer;
+	}
+}

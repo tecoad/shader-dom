@@ -1,0 +1,22 @@
+@theme inline {
+	--font-sans: "InterVariable", system-ui;
+	--font-mono: "GeistMono", system-ui;
+}
+
+@font-face {
+	font-family: "InterVariable";
+	src:
+		url("/fonts/InterVariable.woff2") format("woff2-variations"),
+		url("/fonts/InterVariable.woff2") format("woff2");
+	font-display: block;
+	font-style: normal;
+	font-weight: 100 900;
+}
+
+@font-face {
+	font-family: "GeistMono";
+	src: url("/fonts/GeistMono.woff2") format("woff2");
+	font-weight: normal;
+	font-style: normal;
+	font-display: block;
+}
