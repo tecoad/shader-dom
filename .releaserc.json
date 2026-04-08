@@ -17,7 +17,7 @@
     }],
     ["@semantic-release/exec", {
       "prepareCmd": "node -e \"const fs=require('fs');const f='packages/shader-dom/package.json';const p=JSON.parse(fs.readFileSync(f));p.version='${nextRelease.version}';fs.writeFileSync(f,JSON.stringify(p,null,2)+'\\n')\"",
-      "publishCmd": "npm publish packages/shader-dom --access public --provenance"
+      "publishCmd": "npm publish ./packages/shader-dom --access public --provenance"
     }],
     "@semantic-release/github"
   ]
