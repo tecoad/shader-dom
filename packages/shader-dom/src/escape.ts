@@ -44,13 +44,13 @@ export function setupEscapeLayer(
 
   function syncPositions() {
     const escaped = overlay.querySelectorAll<HTMLElement>(`[${ESCAPE_ATTR}]`)
+    const layerRect = escapeLayer.getBoundingClientRect()
 
     for (let i = 0; i < escaped.length && i < wrappers.length; i++) {
       const rect = escaped[i].getBoundingClientRect()
       const wrapper = wrappers[i]
-      // Escape layer is position:fixed, so use viewport coords directly
-      wrapper.style.left = `${rect.left}px`
-      wrapper.style.top = `${rect.top}px`
+      wrapper.style.left = `${rect.left - layerRect.left}px`
+      wrapper.style.top = `${rect.top - layerRect.top}px`
       wrapper.style.width = `${rect.width}px`
       wrapper.style.height = `${rect.height}px`
     }

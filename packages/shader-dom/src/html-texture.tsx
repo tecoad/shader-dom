@@ -1,5 +1,4 @@
 import { type ReactNode, useCallback, useContext, useEffect, useId, useRef } from "react"
-import { createPortal } from "react-dom"
 import { ShaderContext } from "shaders/dist/react/Shader.js"
 import { CanvasTexture, SRGBColorSpace } from "three/webgpu"
 import { float, screenUV, texture, vec2, vec4 } from "three/tsl"
@@ -170,16 +169,16 @@ export function HtmlTexture({
   }, [interactive])
 
   // Escape layer — visible clones of [data-escape-shader] elements
-  // Portaled to body AFTER the overlay so it renders on top (same z-index, later DOM order)
   useEffect(() => {
     if (!interactive) return
     const overlay = domRef.current
-    if (!overlay) return
+    const shaderContainer = shaderContainerRef.current
+    if (!overlay || !shaderContainer) return
 
     const escapeLayer = document.createElement("div")
     escapeLayer.style.cssText =
-      "position:fixed;inset:0;z-index:2147483647;pointer-events:none;"
-    document.body.appendChild(escapeLayer)
+      "position:absolute;inset:0;pointer-events:none;z-index:3;"
+    shaderContainer.appendChild(escapeLayer)
 
     const cleanup = setupEscapeLayer(overlay, escapeLayer)
 
@@ -191,21 +190,20 @@ export function HtmlTexture({
 
   return (
     <>
-      {createPortal(
-        <div
-          ref={domRef}
-          style={{
-            position: "fixed",
-            inset: 0,
-            opacity: 0,
-            pointerEvents: interactive ? "auto" : "none",
-            zIndex: interactive ? 2147483647 : -9999,
-          }}
-        >
-          {children}
-        </div>,
-        document.body,
-      )}
+      {/* Overlay — position:absolute works because parent spans are display:contents,
+          so it positions relative to the Shader container (nearest positioned ancestor) */}
+      <div
+        ref={domRef}
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: 0,
+          pointerEvents: interactive ? "auto" : "none",
+          zIndex: 2,
+        }}
+      >
+        {children}
+      </div>
       {/* Marker span for render order detection + shader container discovery */}
       <span ref={markerRef} style={{ display: "contents" }} data-shader-id={instanceId} />
     </>
