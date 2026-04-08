@@ -2,7 +2,6 @@
   "name": "shader-dom",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "demo"],
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@semantic-release/commit-analyzer": "^13.0.1",
