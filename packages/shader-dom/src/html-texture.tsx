@@ -20,7 +20,7 @@ export function HtmlTexture({
   const context = useContext(ShaderContext)
   const domRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<HTMLSpanElement>(null)
-  const snapshotCanvas = useRef<HTMLCanvasElement>(document.createElement("canvas"))
+  const snapshotCanvas = useRef<HTMLCanvasElement>(null as unknown as HTMLCanvasElement)
   const canvasTextureRef = useRef<CanvasTexture | null>(null)
   const snapshotting = useRef(false)
   const reactId = useId()
@@ -30,6 +30,9 @@ export function HtmlTexture({
   useEffect(() => {
     if (!context) return
 
+    if (!snapshotCanvas.current) {
+      snapshotCanvas.current = document.createElement("canvas")
+    }
     const canvas = snapshotCanvas.current
     const canvasTexture = new CanvasTexture(canvas)
     canvasTexture.colorSpace = SRGBColorSpace
