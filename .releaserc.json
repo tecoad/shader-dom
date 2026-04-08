@@ -15,7 +15,9 @@
         "headerCorrespondence": ["type", "scope", "subject"]
       }
     }],
-    "@semantic-release/npm",
+    ["@semantic-release/npm", {
+      "pkgRoot": "packages/shader-dom"
+    }],
     "@semantic-release/github"
   ]
 }
