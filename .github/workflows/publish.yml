@@ -27,9 +27,8 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - run: bun run --cwd packages/shader-dom build
+      - run: bun run build
 
-      - run: rm -f bun.lock
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

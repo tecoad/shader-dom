@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bun run --cwd ../packages/shader-dom build && vite build",
+    "predev": "bun run --cwd .. build",
+    "build": "bun run --cwd .. build && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,7 +19,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router": "^7.14.0",
-    "shader-dom": "*",
+    "shader-dom": "file:..",
     "shaders": "^2.5.92",
     "tailwind-merge": "^3.5.0"
   },

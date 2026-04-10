@@ -1,15 +1,78 @@
 {
   "name": "shader-dom",
-  "private": true,
+  "version": "0.0.1",
+  "description": "GPU fragment shaders on live, interactive DOM elements",
+  "sideEffects": false,
+  "workspaces": ["demo"],
+  "license": "MIT",
   "type": "module",
-  "workspaces": ["packages/*", "demo"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "release": "semantic-release"
+  },
+  "keywords": [
+    "shader",
+    "dom",
+    "gpu",
+    "webgl",
+    "webgpu",
+    "react",
+    "three",
+    "shaders",
+    "fragment-shader",
+    "foreignobject"
+  ],
+  "author": {
+    "name": "Matt Silva",
+    "email": "tecoad@gmail.com",
+    "url": "https://github.com/tecoad"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tecoad/shader-dom"
+  },
+  "homepage": "https://github.com/tecoad/shader-dom",
+  "bugs": {
+    "url": "https://github.com/tecoad/shader-dom/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "shaders": ">=2",
+    "three": ">=0.170"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@semantic-release/commit-analyzer": "^13.0.1",
-    "@semantic-release/github": "^12.0.6",
     "@semantic-release/exec": "^7.0.3",
+    "@semantic-release/github": "^12.0.6",
     "@semantic-release/npm": "^13.1.4",
     "@semantic-release/release-notes-generator": "^14.1.0",
-    "semantic-release": "^25.0.3"
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.183.0",
+    "semantic-release": "^25.0.3",
+    "three": "^0.183.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.9.3"
   }
 }
