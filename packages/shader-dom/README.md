@@ -84,7 +84,7 @@ Content inside `<EscapeShader>` renders normally without shader effects, maintai
 </HtmlTexture>
 ```
 
-Escaped content supports native hover, text selection, and pointer events.
+Escaped content supports native hover, CSS transitions, and pointer events. Children render twice (invisible ghost for layout + visible portal for interaction), which is negligible for simple components like buttons and badges.
 
 ## How it works
 
@@ -92,7 +92,7 @@ Escaped content supports native hover, text selection, and pointer events.
 2. **Texture** — A Three.js `CanvasTexture` wraps the canvas. Each frame, `needsUpdate = true` triggers direct GPU upload — no PNG encoding, no URL loading
 3. **Interactivity** — An invisible overlay (`opacity: 0`) sits above the canvas, receiving all pointer events. Hover and transition states are captured via `getComputedStyle` on the live DOM
 4. **Selection** — Text selection highlights are rendered as positioned divs using `Range.getClientRects()`, since `::selection` can't escape parent `opacity: 0`
-5. **Escape** — `<EscapeShader>` content is hidden in the texture and cloned to a visible layer with native pointer events
+5. **Escape** — `<EscapeShader>` keeps an invisible ghost in the overlay (for layout) and portals the real children above the canvas (for visibility and interaction)
 
 ## Limitations
 
@@ -100,6 +100,7 @@ Escaped content supports native hover, text selection, and pointer events.
 - Cross-origin images won't appear in the snapshot
 - `<iframe>`, `<video>`, `<canvas>` elements inside children won't be captured
 - Snapshot is async (Image load) — brief delay between DOM change and texture update
+- `<EscapeShader>` renders children twice — avoid wrapping components with heavy side effects
 
 ## License
 

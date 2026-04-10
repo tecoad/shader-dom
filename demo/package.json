@@ -18,7 +18,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router": "^7.14.0",
-    "shader-dom": "file:../packages/shader-dom",
+    "shader-dom": "workspace:*",
     "shaders": "^2.5.92",
     "tailwind-merge": "^3.5.0"
   },

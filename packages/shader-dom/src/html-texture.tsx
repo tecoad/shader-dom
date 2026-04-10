@@ -1,11 +1,13 @@
-import { type ReactNode, useCallback, useContext, useEffect, useId, useRef } from "react"
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from "react"
 import { ShaderContext } from "shaders/dist/react/Shader.js"
 import { CanvasTexture, SRGBColorSpace } from "three/webgpu"
 import { float, screenUV, texture, vec2, vec4 } from "three/tsl"
 
 import { snapshotToCanvas } from "./snapshot"
 import { setupSelectionHighlights } from "./selection"
-import { setupEscapeLayer } from "./escape"
+import { setupCaretRendering } from "./caret"
+
+export const EscapeLayerContext = createContext<HTMLElement | null>(null)
 
 export interface HtmlTextureProps {
   children: ReactNode
@@ -138,13 +140,12 @@ export function HtmlTexture({
   useEffect(() => {
     const marker = markerRef.current
     if (!marker) return
-    let el: HTMLElement | null = marker
-    while (el && !el.querySelector("canvas")) {
-      el = el.parentElement
-    }
-    if (el) {
-      el.style.position = "relative"
-      shaderContainerRef.current = el
+    // Shader renders a <div>, shader components render <span style="display:contents">
+    // So the first <div> ancestor is the Shader container (no need to wait for canvas)
+    const container = marker.closest("div")
+    if (container) {
+      container.style.position = "relative"
+      shaderContainerRef.current = container
     }
   }, [])
 
@@ -168,25 +169,43 @@ export function HtmlTexture({
     }
   }, [interactive])
 
-  // Escape layer — visible clones of [data-escape-shader] elements
+  // Caret rendering — fake blinking caret for focused inputs
   useEffect(() => {
     if (!interactive) return
     const overlay = domRef.current
     const shaderContainer = shaderContainerRef.current
     if (!overlay || !shaderContainer) return
 
-    const escapeLayer = document.createElement("div")
-    escapeLayer.style.cssText =
-      "position:absolute;inset:0;pointer-events:none;z-index:3;"
-    shaderContainer.appendChild(escapeLayer)
+    const caretLayer = document.createElement("div")
+    caretLayer.style.cssText =
+      "position:absolute;inset:0;pointer-events:none;z-index:4;"
+    shaderContainer.appendChild(caretLayer)
 
-    const cleanup = setupEscapeLayer(overlay, escapeLayer)
+    const cleanup = setupCaretRendering(overlay, caretLayer)
 
     return () => {
       cleanup()
-      escapeLayer.remove()
+      caretLayer.remove()
     }
   }, [interactive])
+
+  // Escape layer — created once, shared via context with EscapeShader children
+  const [escapeLayer, setEscapeLayer] = useState<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const shaderContainer = shaderContainerRef.current
+    if (!shaderContainer) return
+
+    const layer = document.createElement("div")
+    layer.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:3;"
+    shaderContainer.appendChild(layer)
+    setEscapeLayer(layer)
+
+    return () => {
+      layer.remove()
+      setEscapeLayer(null)
+    }
+  }, [])
 
   return (
     <>
@@ -202,7 +221,9 @@ export function HtmlTexture({
           zIndex: 2,
         }}
       >
-        {children}
+        <EscapeLayerContext.Provider value={escapeLayer}>
+          {children}
+        </EscapeLayerContext.Provider>
       </div>
       {/* Marker span for render order detection + shader container discovery */}
       <span ref={markerRef} style={{ display: "contents" }} data-shader-id={instanceId} />
