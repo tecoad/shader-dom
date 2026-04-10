@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "predev": "bun run --cwd .. build",
-    "build": "bun run --cwd .. build && vite build",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
