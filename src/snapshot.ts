@@ -1,3 +1,6 @@
+import { parseGIF, decompressFrames } from "gifuct-js"
+import type { ParsedFrame } from "gifuct-js"
+
 let cachedCSS: string | null = null
 let cachedSheetCount = 0
 let fontUrlMap: Map<string, string> | null = null
@@ -6,6 +9,18 @@ let fontEmbedStarted = false
 let imageUrlMap: Map<string, string> | null = null
 let imageEmbedStarted = false
 const imgDataCache = new Map<string, string>()
+
+interface GifAnimation {
+	frames: ParsedFrame[]
+	canvas: HTMLCanvasElement
+	ctx: CanvasRenderingContext2D
+	currentFrame: number
+	lastAdvance: number
+	width: number
+	height: number
+}
+
+const gifCache = new Map<string, GifAnimation | "pending">()
 
 /**
  * Collects all CSS rules from every stylesheet on the page.
@@ -135,6 +150,87 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 const FONT_EXTENSIONS = /\.(woff2?|ttf|otf|eot)(\?|$)/i
+const ANIMATED_GIF = /\.gif(\?|$)/i
+
+/**
+ * Fetches a GIF, decodes all frames with gifuct-js, and stores
+ * the decoded animation in gifCache. Runs once per GIF URL.
+ * While decoding, gifCache holds "pending" so embedImages can
+ * fall back to static frame 0 via drawImage.
+ */
+function initGifAnimation(src: string): void {
+	gifCache.set(src, "pending")
+	fetch(src)
+		.then(res => res.arrayBuffer())
+		.then(buffer => {
+			const gif = parseGIF(buffer)
+			const frames = decompressFrames(gif, true)
+			if (frames.length === 0) {
+				gifCache.delete(src)
+				return
+			}
+
+			const width = gif.lsd.width
+			const height = gif.lsd.height
+			const canvas = document.createElement("canvas")
+			canvas.width = width
+			canvas.height = height
+			const ctx = canvas.getContext("2d")!
+
+			// Draw first frame
+			const first = frames[0]
+			const imageData = ctx.createImageData(first.dims.width, first.dims.height)
+			imageData.data.set(first.patch)
+			ctx.putImageData(imageData, first.dims.left, first.dims.top)
+
+			gifCache.set(src, {
+				frames,
+				canvas,
+				ctx,
+				currentFrame: 0,
+				lastAdvance: performance.now(),
+				width,
+				height,
+			})
+		})
+		.catch(() => {
+			gifCache.delete(src)
+		})
+}
+
+/**
+ * Advances a GIF animation to the correct frame based on elapsed time.
+ * Handles frame disposal (keep, clear, restore) and draws the new
+ * frame patch onto the persistent compositing canvas.
+ */
+function advanceGifFrame(anim: GifAnimation): void {
+	const now = performance.now()
+	const frame = anim.frames[anim.currentFrame]
+
+	if (now - anim.lastAdvance < frame.delay) return
+
+	// Handle disposal of current frame before advancing
+	if (frame.disposalType === 2) {
+		anim.ctx.clearRect(
+			frame.dims.left,
+			frame.dims.top,
+			frame.dims.width,
+			frame.dims.height
+		)
+	}
+	// disposal 0/1: keep current canvas content
+	// disposal 3: restore to previous (rare, treat as keep)
+
+	// Advance frame
+	anim.currentFrame = (anim.currentFrame + 1) % anim.frames.length
+	anim.lastAdvance = now
+
+	// Draw new frame
+	const next = anim.frames[anim.currentFrame]
+	const imageData = anim.ctx.createImageData(next.dims.width, next.dims.height)
+	imageData.data.set(next.patch)
+	anim.ctx.putImageData(imageData, next.dims.left, next.dims.top)
+}
 
 /**
  * Finds all url() references in CSS outside @font-face blocks,
@@ -248,6 +344,21 @@ function embedImages(original: HTMLElement, clone: HTMLElement): void {
 		const cloneImg = cloneImages[i]
 		const src = origImg.src
 		if (!src || src.startsWith("data:")) continue
+
+		// Animated GIF: decode with gifuct-js and advance frames
+		if (ANIMATED_GIF.test(src)) {
+			const cached = gifCache.get(src)
+			if (!cached) {
+				initGifAnimation(src)
+				// Fall through to static drawImage for frame 0 while decoding
+			} else if (cached !== "pending") {
+				advanceGifFrame(cached)
+				const dataUri = cached.canvas.toDataURL()
+				cloneImg.setAttribute("src", dataUri)
+				continue
+			}
+			// If pending, fall through to static drawImage for frame 0
+		}
 
 		if (imgDataCache.has(src)) {
 			cloneImg.setAttribute("src", imgDataCache.get(src)!)

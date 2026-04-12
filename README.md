@@ -97,7 +97,8 @@ Escaped content supports native hover, CSS transitions, and pointer events. Chil
 ## Limitations
 
 - External fonts referenced via URL may not render in snapshots (fonts must be loaded/cached by the browser)
-- Cross-origin images won't appear in the snapshot
+- Cross-origin images won't appear in the snapshot (same-origin images are embedded automatically)
+- Animated GIFs are supported (decoded frame-by-frame via gifuct-js); animated WebP is not
 - `<iframe>`, `<video>`, `<canvas>` elements inside children won't be captured
 - Snapshot is async (Image load) — brief delay between DOM change and texture update
 - `<EscapeShader>` renders children twice — avoid wrapping components with heavy side effects
