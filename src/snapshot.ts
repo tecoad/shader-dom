@@ -1,5 +1,4 @@
 import { parseGIF, decompressFrames } from "gifuct-js"
-import type { ParsedFrame } from "gifuct-js"
 
 let cachedCSS: string | null = null
 let cachedSheetCount = 0
@@ -11,7 +10,8 @@ let imageEmbedStarted = false
 const imgDataCache = new Map<string, string>()
 
 interface GifAnimation {
-	frames: ParsedFrame[]
+	frames: ImageData[]
+	delays: number[]
 	canvas: HTMLCanvasElement
 	ctx: CanvasRenderingContext2D
 	currentFrame: number
@@ -153,10 +153,13 @@ const FONT_EXTENSIONS = /\.(woff2?|ttf|otf|eot)(\?|$)/i
 const ANIMATED_GIF = /\.gif(\?|$)/i
 
 /**
- * Fetches a GIF, decodes all frames with gifuct-js, and stores
- * the decoded animation in gifCache. Runs once per GIF URL.
+ * Fetches a GIF, pre-composes all frames with correct disposal handling,
+ * and stores the decoded animation in gifCache. Runs once per GIF URL.
  * While decoding, gifCache holds "pending" so embedImages can
  * fall back to static frame 0 via drawImage.
+ *
+ * Pre-composition strategy adapted from react-gif-timeline: each frame
+ * is fully composited during parsing, so playback is just putImageData.
  */
 function initGifAnimation(src: string): void {
 	gifCache.set(src, "pending")
@@ -164,27 +167,59 @@ function initGifAnimation(src: string): void {
 		.then(res => res.arrayBuffer())
 		.then(buffer => {
 			const gif = parseGIF(buffer)
-			const frames = decompressFrames(gif, true)
-			if (frames.length === 0) {
+			const rawFrames = decompressFrames(gif, true)
+			if (rawFrames.length === 0) {
 				gifCache.delete(src)
 				return
 			}
 
 			const width = gif.lsd.width
 			const height = gif.lsd.height
+
+			// Accumulator canvas for compositing patches into full frames
+			const accumulator = document.createElement("canvas")
+			accumulator.width = width
+			accumulator.height = height
+			const accCtx = accumulator.getContext("2d")!
+
+			// Temp canvas for drawing each frame's patch
+			const temp = document.createElement("canvas")
+			const tempCtx = temp.getContext("2d")!
+
+			const frames: ImageData[] = []
+			const delays: number[] = []
+
+			for (const frame of rawFrames) {
+				const { patch, dims, disposalType, delay } = frame
+
+				if (patch) {
+					temp.width = dims.width
+					temp.height = dims.height
+					const patchData = new ImageData(new Uint8ClampedArray(patch), dims.width, dims.height)
+					tempCtx.putImageData(patchData, 0, 0)
+					accCtx.drawImage(temp, dims.left, dims.top)
+				}
+
+				// Capture the full composited frame
+				frames.push(accCtx.getImageData(0, 0, width, height))
+				delays.push(delay)
+
+				// Handle disposal
+				if (disposalType === 2 || disposalType === 3) {
+					accCtx.clearRect(dims.left, dims.top, dims.width, dims.height)
+				}
+			}
+
+			// Render canvas for playback
 			const canvas = document.createElement("canvas")
 			canvas.width = width
 			canvas.height = height
 			const ctx = canvas.getContext("2d")!
-
-			// Draw first frame
-			const first = frames[0]
-			const imageData = ctx.createImageData(first.dims.width, first.dims.height)
-			imageData.data.set(first.patch)
-			ctx.putImageData(imageData, first.dims.left, first.dims.top)
+			ctx.putImageData(frames[0], 0, 0)
 
 			gifCache.set(src, {
 				frames,
+				delays,
 				canvas,
 				ctx,
 				currentFrame: 0,
@@ -200,36 +235,15 @@ function initGifAnimation(src: string): void {
 
 /**
  * Advances a GIF animation to the correct frame based on elapsed time.
- * Handles frame disposal (keep, clear, restore) and draws the new
- * frame patch onto the persistent compositing canvas.
+ * Frames are pre-composed, so this is just a putImageData call.
  */
 function advanceGifFrame(anim: GifAnimation): void {
 	const now = performance.now()
-	const frame = anim.frames[anim.currentFrame]
+	if (now - anim.lastAdvance < anim.delays[anim.currentFrame]) return
 
-	if (now - anim.lastAdvance < frame.delay) return
-
-	// Handle disposal of current frame before advancing
-	if (frame.disposalType === 2) {
-		anim.ctx.clearRect(
-			frame.dims.left,
-			frame.dims.top,
-			frame.dims.width,
-			frame.dims.height
-		)
-	}
-	// disposal 0/1: keep current canvas content
-	// disposal 3: restore to previous (rare, treat as keep)
-
-	// Advance frame
 	anim.currentFrame = (anim.currentFrame + 1) % anim.frames.length
 	anim.lastAdvance = now
-
-	// Draw new frame
-	const next = anim.frames[anim.currentFrame]
-	const imageData = anim.ctx.createImageData(next.dims.width, next.dims.height)
-	imageData.data.set(next.patch)
-	anim.ctx.putImageData(imageData, next.dims.left, next.dims.top)
+	anim.ctx.putImageData(anim.frames[anim.currentFrame], 0, 0)
 }
 
 /**
@@ -352,7 +366,18 @@ function embedImages(original: HTMLElement, clone: HTMLElement): void {
 				initGifAnimation(src)
 				// Fall through to static drawImage for frame 0 while decoding
 			} else if (cached !== "pending") {
-				advanceGifFrame(cached)
+				const frameAttr = cloneImg.getAttribute("data-gif-frame")
+				if (frameAttr !== null) {
+					// Controlled mode: render specific frame
+					const frameIndex = Math.min(
+						Math.max(0, parseInt(frameAttr, 10) || 0),
+						cached.frames.length - 1
+					)
+					cached.ctx.putImageData(cached.frames[frameIndex], 0, 0)
+				} else {
+					// Auto mode: advance based on timing
+					advanceGifFrame(cached)
+				}
 				const dataUri = cached.canvas.toDataURL()
 				cloneImg.setAttribute("src", dataUri)
 				continue
