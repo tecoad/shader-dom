@@ -3,6 +3,10 @@ let cachedSheetCount = 0
 let fontUrlMap: Map<string, string> | null = null
 let fontEmbedStarted = false
 
+let imageUrlMap: Map<string, string> | null = null
+let imageEmbedStarted = false
+const imgDataCache = new Map<string, string>()
+
 /**
  * Collects all CSS rules from every stylesheet on the page.
  * Cached, but invalidates when stylesheets are added/removed
@@ -34,6 +38,13 @@ function extractPageCSS(): string {
 		}
 	}
 
+	// Re-apply cached image embeddings to the fresh CSS
+	if (imageUrlMap) {
+		for (const [originalUrl, dataUri] of imageUrlMap) {
+			css = css.split(originalUrl).join(dataUri)
+		}
+	}
+
 	cachedCSS = css
 	cachedSheetCount = currentCount
 
@@ -43,6 +54,22 @@ function extractPageCSS(): string {
 		buildFontMap(css).then(map => {
 			if (map.size > 0) {
 				fontUrlMap = map
+				// Re-apply to current cache
+				let updated = cachedCSS!
+				for (const [originalUrl, dataUri] of map) {
+					updated = updated.split(originalUrl).join(dataUri)
+				}
+				cachedCSS = updated
+			}
+		})
+	}
+
+	// Kick off image URL embedding in background (one-time)
+	if (!imageEmbedStarted) {
+		imageEmbedStarted = true
+		buildImageUrlMap(css).then(map => {
+			if (map.size > 0) {
+				imageUrlMap = map
 				// Re-apply to current cache
 				let updated = cachedCSS!
 				for (const [originalUrl, dataUri] of map) {
@@ -107,6 +134,65 @@ function blobToBase64(blob: Blob): Promise<string> {
 	})
 }
 
+const FONT_EXTENSIONS = /\.(woff2?|ttf|otf|eot)(\?|$)/i
+
+/**
+ * Finds all url() references in CSS outside @font-face blocks,
+ * fetches them, and converts to base64 data URIs.
+ * Mirrors buildFontMap — runs once in the background.
+ */
+async function buildImageUrlMap(css: string): Promise<Map<string, string>> {
+	const urlRegex = /url\(["']?([^"')]+)["']?\)/g
+	const fontFaceRegex = /@font-face\s*\{[^}]*\}/g
+	const map = new Map<string, string>()
+
+	// Collect URLs inside @font-face to exclude them
+	const fontFaceUrls = new Set<string>()
+	const fontFaces = css.match(fontFaceRegex)
+	if (fontFaces) {
+		for (const block of fontFaces) {
+			let match: RegExpExecArray | null
+			urlRegex.lastIndex = 0
+			// biome-ignore lint/suspicious/noAssignInExpressions: regex exec loop
+			while ((match = urlRegex.exec(block)) !== null) {
+				fontFaceUrls.add(match[1])
+			}
+		}
+	}
+
+	// Find all other url() references
+	const urls = new Set<string>()
+	urlRegex.lastIndex = 0
+	let match: RegExpExecArray | null
+	// biome-ignore lint/suspicious/noAssignInExpressions: regex exec loop
+	while ((match = urlRegex.exec(css)) !== null) {
+		const url = match[1]
+		if (url.startsWith("data:")) continue
+		if (fontFaceUrls.has(url)) continue
+		if (FONT_EXTENSIONS.test(url)) continue
+		urls.add(url)
+	}
+
+	if (urls.size === 0) return map
+
+	await Promise.all(
+		[...urls].map(async url => {
+			try {
+				const resolved = new URL(url, window.location.href).href
+				const response = await fetch(resolved)
+				if (!response.ok) return
+				const blob = await response.blob()
+				const base64 = await blobToBase64(blob)
+				map.set(url, base64)
+			} catch {
+				// Image fetch failed — skip
+			}
+		})
+	)
+
+	return map
+}
+
 /**
  * Copies runtime form state from original to clone.
  * cloneNode only copies HTML attributes, not DOM properties
@@ -143,6 +229,74 @@ function syncFormState(original: HTMLElement, clone: HTMLElement): void {
 		if (orig.scrollTop || orig.scrollLeft) {
 			;(cloneAll[i] as HTMLElement).scrollTop = orig.scrollTop
 			;(cloneAll[i] as HTMLElement).scrollLeft = orig.scrollLeft
+		}
+	}
+}
+
+/**
+ * Embeds images as base64 data URIs in the clone so they survive
+ * SVG foreignObject sandboxing. Uses canvas extraction for <img>
+ * elements (synchronous, fast) and replaces inline background-image
+ * URLs from the shared cache.
+ */
+function embedImages(original: HTMLElement, clone: HTMLElement): void {
+	const origImages = original.querySelectorAll("img")
+	const cloneImages = clone.querySelectorAll("img")
+
+	for (let i = 0; i < origImages.length; i++) {
+		const origImg = origImages[i]
+		const cloneImg = cloneImages[i]
+		const src = origImg.src
+		if (!src || src.startsWith("data:")) continue
+
+		if (imgDataCache.has(src)) {
+			cloneImg.setAttribute("src", imgDataCache.get(src)!)
+			continue
+		}
+
+		if (origImg.complete && origImg.naturalWidth > 0) {
+			try {
+				const c = document.createElement("canvas")
+				c.width = origImg.naturalWidth
+				c.height = origImg.naturalHeight
+				const ctx = c.getContext("2d")!
+				ctx.drawImage(origImg, 0, 0)
+				const dataUri = c.toDataURL()
+				imgDataCache.set(src, dataUri)
+				cloneImg.setAttribute("src", dataUri)
+			} catch {
+				// Cross-origin tainted canvas — skip silently
+			}
+		}
+	}
+
+	// Inline background-image replacement
+	const origAll = original.querySelectorAll("*")
+	const cloneAll = clone.querySelectorAll("*")
+	const urlRegex = /url\(["']?([^"')]+)["']?\)/g
+
+	for (let i = 0; i < origAll.length; i++) {
+		const origEl = origAll[i] as HTMLElement
+		const bg = origEl.style.backgroundImage
+		if (!bg || !bg.includes("url(")) continue
+
+		let replaced = bg
+		let match: RegExpExecArray | null
+		urlRegex.lastIndex = 0
+		// biome-ignore lint/suspicious/noAssignInExpressions: regex exec loop
+		while ((match = urlRegex.exec(bg)) !== null) {
+			const url = match[1]
+			if (url.startsWith("data:")) continue
+
+			const resolved = new URL(url, window.location.href).href
+			const cached = imgDataCache.get(resolved) ?? imageUrlMap?.get(url)
+			if (cached) {
+				replaced = replaced.split(match[0]).join(`url("${cached}")`)
+			}
+		}
+
+		if (replaced !== bg) {
+			;(cloneAll[i] as HTMLElement).style.backgroundImage = replaced
 		}
 	}
 }
@@ -213,11 +367,11 @@ function applyInteractiveStyles(
  * No PNG encoding, no blob URLs — draws directly to the canvas
  * that backs the CanvasTexture for immediate GPU upload.
  */
-export function snapshotToCanvas(
+export async function snapshotToCanvas(
 	el: HTMLElement,
 	targetCanvas: HTMLCanvasElement,
 	onComplete?: () => void
-): void {
+): Promise<void> {
 	const width = el.offsetWidth
 	const height = el.offsetHeight
 	if (width === 0 || height === 0) return
@@ -227,6 +381,7 @@ export function snapshotToCanvas(
 
 	syncFormState(el, clone)
 	applyInteractiveStyles(el, clone)
+	embedImages(el, clone)
 
 	// Hide escaped elements in the texture (they render in a separate visible layer)
 	const escaped = clone.querySelectorAll<HTMLElement>("[data-escape-shader]")
@@ -249,15 +404,15 @@ export function snapshotToCanvas(
 		`</foreignObject></svg>`
 
 	const img = new Image()
-	img.onload = () => {
-		const dpr = window.devicePixelRatio || 1
-		targetCanvas.width = width * dpr
-		targetCanvas.height = height * dpr
-		const ctx = targetCanvas.getContext("2d")!
-		ctx.scale(dpr, dpr)
-		ctx.clearRect(0, 0, width, height)
-		ctx.drawImage(img, 0, 0, width, height)
-		onComplete?.()
-	}
 	img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`
+	await img.decode()
+
+	const dpr = window.devicePixelRatio || 1
+	targetCanvas.width = width * dpr
+	targetCanvas.height = height * dpr
+	const ctx = targetCanvas.getContext("2d")!
+	ctx.scale(dpr, dpr)
+	ctx.clearRect(0, 0, width, height)
+	ctx.drawImage(img, 0, 0, width, height)
+	onComplete?.()
 }
