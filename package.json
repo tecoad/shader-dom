@@ -15,6 +15,18 @@
         "default": "./dist/index.js"
       }
     },
+    "./shaders": {
+      "import": {
+        "types": "./dist/shaders/index.d.ts",
+        "default": "./dist/shaders/index.js"
+      }
+    },
+    "./presets/liquid": {
+      "import": {
+        "types": "./dist/presets/liquid/index.d.ts",
+        "default": "./dist/presets/liquid/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -59,6 +71,9 @@
     "react-dom": ">=18",
     "shaders": ">=2",
     "three": ">=0.170"
+  },
+  "peerDependenciesMeta": {
+    "shaders": { "optional": true }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",

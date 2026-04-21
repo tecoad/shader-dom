@@ -16,7 +16,10 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "shader-dom": ["../dist/index.d.ts"],
+      "shader-dom/shaders": ["../dist/shaders/index.d.ts"],
+      "shader-dom/presets/liquid": ["../dist/presets/liquid/index.d.ts"]
     }
   },
   "include": ["src"]

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/button"
 import { Controls } from "@/components/controls"
 import { FitHeadline } from "@/components/fit-headline"
@@ -38,7 +38,6 @@ export default function App() {
 	const [shader, setShader] = useState("wave")
 	const [counter, setCounter] = useState(0)
 	const [isLive, setIsLive] = useState(true)
-	const [snapshotMs, setSnapshotMs] = useState(0)
 	const [dark, setDark] = useState(() =>
 		document.documentElement.classList.contains("dark")
 	)
@@ -50,19 +49,6 @@ export default function App() {
 		document.documentElement.classList.toggle("dark", next)
 		localStorage.setItem("theme", next ? "dark" : "light")
 		setDark(next)
-	}, [])
-
-	const emaRef = useRef(0)
-	const lastUpdateRef = useRef(0)
-	const handleSnapshotMs = useCallback((ms: number) => {
-		const alpha = 0.1
-		emaRef.current =
-			emaRef.current === 0 ? ms : emaRef.current * (1 - alpha) + ms * alpha
-		const now = performance.now()
-		if (now - lastUpdateRef.current > 500) {
-			lastUpdateRef.current = now
-			setSnapshotMs(emaRef.current)
-		}
 	}, [])
 
 	// Live counter update
@@ -133,20 +119,12 @@ export default function App() {
 					</p>
 				</div>
 
-				<Controls
-					isLive={isLive}
-					snapshotMs={snapshotMs}
-					onToggleLive={toggleLive}
-				/>
+				<Controls isLive={isLive} onToggleLive={toggleLive} />
 
 				<div>
 					<ShaderSelector shader={shader} onShaderChange={setShader} />
 
-					<ShaderDemo
-						shader={shader}
-						counter={counter}
-						onSnapshotMs={handleSnapshotMs}
-					/>
+					<ShaderDemo shader={shader} counter={counter} />
 					<Floodlines className="[--line-color:var(--color-base-3)]" />
 				</div>
 

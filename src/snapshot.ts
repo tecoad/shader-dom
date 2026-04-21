@@ -1,4 +1,4 @@
-import { parseGIF, decompressFrames } from "gifuct-js"
+import { decompressFrames, parseGIF } from "gifuct-js"
 
 let cachedCSS: string | null = null
 let cachedSheetCount = 0
@@ -195,7 +195,11 @@ function initGifAnimation(src: string): void {
 				if (patch) {
 					temp.width = dims.width
 					temp.height = dims.height
-					const patchData = new ImageData(new Uint8ClampedArray(patch), dims.width, dims.height)
+					const patchData = new ImageData(
+						new Uint8ClampedArray(patch),
+						dims.width,
+						dims.height
+					)
 					tempCtx.putImageData(patchData, 0, 0)
 					accCtx.drawImage(temp, dims.left, dims.top)
 				}

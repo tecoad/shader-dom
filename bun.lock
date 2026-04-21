@@ -28,6 +28,9 @@
         "shaders": ">=2",
         "three": ">=0.170",
       },
+      "optionalPeers": [
+        "shaders",
+      ],
     },
     "demo": {
       "name": "demo",

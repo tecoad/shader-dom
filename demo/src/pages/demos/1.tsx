@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { EscapeShader, HtmlTexture } from "shader-dom"
+import { EscapeShader, HtmlTexture } from "shader-dom/shaders"
 import { CursorRipples, Shader } from "shaders/react"
 
 export default function Demo1() {

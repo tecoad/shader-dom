@@ -3,6 +3,9 @@
   "plugins": [
     ["@semantic-release/commit-analyzer", {
       "preset": "angular",
+      "releaseRules": [
+        { "breaking": true, "release": "minor" }
+      ],
       "parserOpts": {
         "headerPattern": "^[^a-zA-Z]*(\\w*)(?:\\(([\\w\\$\\.\\-\\* ]*)\\))?\\: (.*)$",
         "headerCorrespondence": ["type", "scope", "subject"]
