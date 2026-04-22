@@ -1,5 +1,7 @@
 import { decompressFrames, parseGIF } from "gifuct-js"
 
+const svgCache = new WeakMap<HTMLCanvasElement, string>()
+
 let cachedCSS: string | null = null
 let cachedSheetCount = 0
 let fontUrlMap: Map<string, string> | null = null
@@ -69,7 +71,6 @@ function extractPageCSS(): string {
 		buildFontMap(css).then(map => {
 			if (map.size > 0) {
 				fontUrlMap = map
-				// Re-apply to current cache
 				let updated = cachedCSS!
 				for (const [originalUrl, dataUri] of map) {
 					updated = updated.split(originalUrl).join(dataUri)
@@ -85,7 +86,6 @@ function extractPageCSS(): string {
 		buildImageUrlMap(css).then(map => {
 			if (map.size > 0) {
 				imageUrlMap = map
-				// Re-apply to current cache
 				let updated = cachedCSS!
 				for (const [originalUrl, dataUri] of map) {
 					updated = updated.split(originalUrl).join(dataUri)
@@ -95,7 +95,7 @@ function extractPageCSS(): string {
 		})
 	}
 
-	return css
+	return cachedCSS
 }
 
 /**
@@ -463,46 +463,132 @@ const VISUAL_PROPS = [
 ]
 
 /**
- * Reads computed styles from interactive elements on the ORIGINAL DOM,
- * then applies them to corresponding elements on the CLONE.
- * Captures elements that are :hover/:active AND elements with active
- * CSS transitions (so transition intermediates are captured correctly).
- * Never modifies the live DOM — zero style recalc cost.
+ * Inlines live `getComputedStyle` visual properties onto the clone for any
+ * element that is currently in the `:hover`, `:focus`, or `:active` chain —
+ * and (if `captureTransitions` is true) for elements with an active CSS
+ * transition so mid-animation intermediate values are sampled.
+ *
+ * WHY INLINE AND NOT CSS-REWRITING?
+ * We tried pseudo-class rewriting (`:hover` → `.pseudo-hover` in the CSS
+ * embedded in the SVG). That works for hand-written CSS but breaks with
+ * Tailwind 4: Tailwind wraps every `hover:*` rule in `@media (hover: hover)`,
+ * and SVG foreignObject rasterized to an image doesn't reliably evaluate
+ * interactive media features. The class rule silently fails to apply.
+ *
+ * Inlining the computed value bypasses CSS matching entirely. It reads from
+ * the LIVE DOM (where `:hover` and transitions DO work) and writes inline
+ * styles on the clone — inline style has 1,0,0,0 specificity and always
+ * wins. O(k) where k ~ 1-3 for the hover/focus/active chain; the transition
+ * branch is O(N) but only runs while transitions are active (usually
+ * <500ms per interaction).
  */
 function applyInteractiveStyles(
 	original: HTMLElement,
-	clone: HTMLElement
+	clone: HTMLElement,
+	captureTransitions: boolean
 ): void {
 	const origAll = [...original.querySelectorAll("*")]
 	const cloneAll = [...clone.querySelectorAll("*")]
 
-	const hovered = new Set(original.querySelectorAll(":hover"))
-	const active = new Set(original.querySelectorAll(":active"))
+	const interactive = new Set<Element>()
+	for (const el of original.querySelectorAll(":hover")) interactive.add(el)
+	for (const el of original.querySelectorAll(":focus")) interactive.add(el)
+	for (const el of original.querySelectorAll(":active")) interactive.add(el)
+
+	// Fast path: nothing to do if nothing is hovered/focused/active AND we
+	// aren't capturing transitions. Avoids the O(N) getComputedStyle loop.
+	if (interactive.size === 0 && !captureTransitions) return
 
 	for (let i = 0; i < origAll.length; i++) {
 		const el = origAll[i]
-		const isInteractive = hovered.has(el) || active.has(el)
+		const isInteractive = interactive.has(el)
+
+		if (!isInteractive && !captureTransitions) continue
 
 		const computed = getComputedStyle(el)
-		const hasTransition =
-			computed.transitionProperty !== "none" &&
-			computed.transitionProperty !== ""
+		let shouldApply = isInteractive
+		if (!shouldApply) {
+			const hasTransition =
+				computed.transitionProperty !== "none" &&
+				computed.transitionProperty !== ""
+			shouldApply = hasTransition
+		}
+		if (!shouldApply) continue
 
-		if (isInteractive || hasTransition) {
-			const clonedEl = cloneAll[i] as HTMLElement
-			for (const prop of VISUAL_PROPS) {
-				clonedEl.style.setProperty(prop, computed.getPropertyValue(prop))
-			}
+		const clonedEl = cloneAll[i] as HTMLElement
+		for (const prop of VISUAL_PROPS) {
+			clonedEl.style.setProperty(prop, computed.getPropertyValue(prop))
 		}
 	}
+}
+
+const TEXT_METRIC_PROPS = [
+	"font-size",
+	"line-height",
+	"letter-spacing",
+] as const
+
+/**
+ * Floors sub-pixel `font-size` / `line-height` / `letter-spacing` resolved
+ * on `source` and writes the floored values as inline style on `target`.
+ *
+ * Single source of truth shared by two call sites that MUST agree on
+ * character advance:
+ *   1. The snapshot pipeline (SVG foreignObject rasterization — without
+ *      the floor, sub-pixel `font-size: 14.5px` can fit one extra
+ *      character per line in the SVG vs. the live DOM).
+ *   2. The caret clone in `caret.ts` — the rasterized text uses the
+ *      floored metrics, so the caret clone must too or it drifts ahead
+ *      of the visible text as the user types.
+ *
+ * Floor-based logic ported from three-html-render (htmlRenderer.ts:622-634).
+ */
+export function floorSubpixelTextMetrics(
+	source: HTMLElement,
+	target: HTMLElement
+): void {
+	const computed = getComputedStyle(source)
+	for (const prop of TEXT_METRIC_PROPS) {
+		const raw = computed.getPropertyValue(prop)
+		if (!raw.includes(".")) continue
+		const match = /^(-?\d+\.\d+)(px|em|rem)?$/.exec(raw.trim())
+		if (!match) continue
+		const floored = Math.floor(parseFloat(match[1]))
+		const unit = match[2] ?? "px"
+		target.style.setProperty(prop, `${floored}${unit}`)
+	}
+}
+
+function freezeResolvedTextMetrics(
+	original: HTMLElement,
+	clone: HTMLElement
+): void {
+	const origAll = original.querySelectorAll<HTMLElement>("*")
+	const cloneAll = clone.querySelectorAll<HTMLElement>("*")
+	for (let i = 0; i < origAll.length; i++) {
+		floorSubpixelTextMetrics(origAll[i], cloneAll[i])
+	}
+}
+
+export interface SnapshotOptions {
+	/**
+	 * When true, `getComputedStyle` is queried on every descendant with an
+	 * active `transition-*` declaration so mid-animation intermediate
+	 * values are inlined on the clone. Defaults to `false`. Enable only
+	 * while `transitionrun` has fired and `transitionend`/`transitioncancel`
+	 * hasn't balanced it — see `observeInvalidations`.
+	 */
+	captureTransitions?: boolean
 }
 
 /**
  * Snapshots an HTML element onto a target canvas (async due to Image load).
  *
- * Pipeline: clone → sync form state → apply :hover/:active styles →
+ * Pipeline: clone → sync form state → apply pseudo-class markers → freeze
+ * text metrics → (optional) capture transition intermediates → embed images →
  * serialize to XML → wrap in SVG foreignObject with cached page CSS →
- * load as Image → draw to target canvas at 2x (retina)
+ * SVG string cache check (skip rasterize on identical string) → load as Image →
+ * draw to target canvas at dpr.
  *
  * No PNG encoding, no blob URLs — draws directly to the canvas
  * that backs the CanvasTexture for immediate GPU upload.
@@ -510,7 +596,8 @@ function applyInteractiveStyles(
 export async function snapshotToCanvas(
 	el: HTMLElement,
 	targetCanvas: HTMLCanvasElement,
-	onComplete?: () => void
+	onComplete?: () => void,
+	options: SnapshotOptions = {}
 ): Promise<void> {
 	const width = el.offsetWidth
 	const height = el.offsetHeight
@@ -520,7 +607,8 @@ export async function snapshotToCanvas(
 	clone.style.opacity = "1"
 
 	syncFormState(el, clone)
-	applyInteractiveStyles(el, clone)
+	applyInteractiveStyles(el, clone, options.captureTransitions ?? false)
+	freezeResolvedTextMetrics(el, clone)
 	embedImages(el, clone)
 
 	// Hide escaped elements in the texture (they render in a separate visible layer)
@@ -543,13 +631,27 @@ export async function snapshotToCanvas(
 		`</html>` +
 		`</foreignObject></svg>`
 
+	// Cache hit: byte-identical SVG as last snapshot AND target dimensions
+	// unchanged → skip rasterize + GPU upload + onComplete notification.
+	const prevSvg = svgCache.get(targetCanvas)
+	const dpr = window.devicePixelRatio || 1
+	const expectedW = width * dpr
+	const expectedH = height * dpr
+	if (
+		prevSvg === svgString &&
+		targetCanvas.width === expectedW &&
+		targetCanvas.height === expectedH
+	) {
+		return
+	}
+	svgCache.set(targetCanvas, svgString)
+
 	const img = new Image()
 	img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`
 	await img.decode()
 
-	const dpr = window.devicePixelRatio || 1
-	targetCanvas.width = width * dpr
-	targetCanvas.height = height * dpr
+	targetCanvas.width = expectedW
+	targetCanvas.height = expectedH
 	const ctx = targetCanvas.getContext("2d")!
 	ctx.scale(dpr, dpr)
 	ctx.clearRect(0, 0, width, height)

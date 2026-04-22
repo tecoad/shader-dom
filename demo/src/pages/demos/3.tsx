@@ -8,7 +8,9 @@ import { liquidPreset } from "shader-dom/presets/liquid"
  * tagline below a thin divider, #fafafa base with cool+warm radial gradients
  * in multiply blend (same as the Downloads generateTextImage).
  */
-const liquidScene = liquidPreset()
+const liquidScene = liquidPreset({
+	pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+})
 
 export default function Demo3() {
 	const [count, setCount] = useState(0)
@@ -17,9 +19,20 @@ export default function Demo3() {
 		<Shader scene={liquidScene}>
 			<HtmlTexture interactive>
 				<div className="relative h-dvh w-dvw overflow-hidden flex flex-col items-center justify-center bg-[#fafafa] text-[#1d1d1f] font-sans">
-					{/* Ambient light gradients — cool top, warm bottom — multiply blend */}
-					<div className="absolute inset-0 pointer-events-none mix-blend-multiply bg-[radial-gradient(circle_at_50%_10%,rgba(220,225,240,0.6)_0%,rgba(250,250,250,1)_60%)]" />
-					<div className="absolute inset-0 pointer-events-none mix-blend-multiply bg-[radial-gradient(circle_at_50%_95%,rgba(240,230,220,0.4)_0%,rgba(250,250,250,1)_50%)]" />
+					{/* Ambient light gradients — pre-multiplied into #fafafa to avoid the
+					    mix-blend-multiply limitation inside SVG foreignObject. Values hand-
+					    tuned to match the visual of the original canvas-2D version at
+					    /Users/matheus/Downloads/liquid-effect-animation-main. */}
+					<div
+						className="absolute inset-0 pointer-events-none"
+						style={{
+							backgroundImage: `
+								radial-gradient(circle at 50% 10%, #dce1f0 0%, #fafafa 60%),
+								radial-gradient(circle at 50% 95%, #f0e6dc 0%, #fafafa 50%)
+							`,
+							// backgroundBlendMode: "multiply",
+						}}
+					/>
 
 					{/* Subtext (like generateTextImage's subText) */}
 					<div className="relative mb-[2vw] text-[max(11px,0.9vw)] font-semibold tracking-[0.25em] uppercase opacity-35">
@@ -48,6 +61,16 @@ export default function Demo3() {
 					>
 						Clicks: {count}
 					</button>
+
+					<input
+						type="text"
+						placeholder="Type here..."
+						className="relative mt-[1.5vw] px-5 py-3 bg-white border border-[rgba(29,29,31,0.15)] rounded-full text-[15px] tracking-[0.01em] outline-none focus:border-[rgba(29,29,31,0.4)] transition w-[340px]"
+					/>
+					{/* Tagline (like generateTextImage's tagline) */}
+					<div className="relative mt-[1vw] text-[max(11px,1vw)] font-normal tracking-[0.02em] opacity-30">
+						Built with Three.js &nbsp;•&nbsp; React &nbsp;•&nbsp; Tailwind CSS
+					</div>
 				</div>
 			</HtmlTexture>
 		</Shader>

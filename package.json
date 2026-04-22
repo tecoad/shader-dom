@@ -36,6 +36,8 @@
   "scripts": {
     "dev": "tsup --watch",
     "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "release": "semantic-release"
   },
   "keywords": [
@@ -73,7 +75,9 @@
     "three": ">=0.170"
   },
   "peerDependenciesMeta": {
-    "shaders": { "optional": true }
+    "shaders": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
@@ -82,13 +86,16 @@
     "@semantic-release/github": "^12.0.6",
     "@semantic-release/npm": "^13.1.4",
     "@semantic-release/release-notes-generator": "^14.1.0",
+    "@types/jsdom": "^21",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.183.0",
+    "jsdom": "^25",
     "semantic-release": "^25.0.3",
     "three": "^0.183.0",
     "tsup": "^8.4.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3"
   },
   "dependencies": {
     "gifuct-js": "^2.1.2"

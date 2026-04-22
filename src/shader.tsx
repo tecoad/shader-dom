@@ -10,13 +10,14 @@ import {
 	CanvasTexture,
 	DataTexture,
 	type IUniform,
+	LinearSRGBColorSpace,
 	Mesh,
+	NoColorSpace,
 	OrthographicCamera,
 	PlaneGeometry,
 	RGBAFormat,
 	Scene,
 	ShaderMaterial,
-	SRGBColorSpace,
 	type Texture,
 	UnsignedByteType,
 	Vector2,
@@ -232,7 +233,8 @@ export function Shader(props: ShaderProps) {
 		[uniformsProp]
 	)
 
-	// Fragment path lifecycle
+	// Fragment path lifecycle.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `uniformsKey` (the sorted key set of `uniformsProp`) is the actual remount trigger — adding it to deps is load-bearing even though it isn't read inside the effect. `uniformsProp` values are captured at mount time by design (real-time uniform updates are a v1 limitation), so it is intentionally NOT a dep.
 	useEffect(() => {
 		if (!fragmentProp) return
 		const canvas = canvasRef.current
@@ -241,7 +243,18 @@ export function Shader(props: ShaderProps) {
 
 		const renderer = new WebGLRenderer({ canvas, alpha: true, antialias: true })
 		renderer.setPixelRatio(window.devicePixelRatio || 1)
-		renderer.outputColorSpace = SRGBColorSpace
+		// Fragment path is a sRGB-passthrough pipeline: the snapshot canvas
+		// already holds sRGB-encoded bytes from the browser's DOM raster,
+		// and the user's fragment is expected to sample and emit those bytes
+		// unchanged. Any renderer-side encode (linear→sRGB) would corrupt
+		// the output — ShaderMaterial with a custom sampler2D does not get
+		// auto-injected sRGB decode at the sample site, so the shader reads
+		// sRGB values, but the renderer's default `SRGBColorSpace` output
+		// still wraps gl_FragColor with a linear→sRGB encode, producing
+		// linear bytes on the canvas (displayed as if sRGB → crushed
+		// midtones, saturated channel collapse). Match the old raw-WebGL
+		// behaviour by disabling both conversions.
+		renderer.outputColorSpace = LinearSRGBColorSpace
 
 		const scene = new Scene()
 		const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1)
@@ -278,7 +291,11 @@ export function Shader(props: ShaderProps) {
 				return
 			}
 			const tex = new CanvasTexture(snapshotCanvas)
-			tex.colorSpace = SRGBColorSpace
+			// Tag the texture as `NoColorSpace` so three.js does not inject
+			// any sRGB→linear decode at the sampler (see the renderer
+			// outputColorSpace comment above for the full passthrough
+			// rationale).
+			tex.colorSpace = NoColorSpace
 			// Canvas content is already DOM-oriented (top at row 0); combined with
 			// the vertex shader's 1.0 - uv.y flip, flipY=false gives vUv=(0,0) → DOM top-left.
 			tex.flipY = false
@@ -337,7 +354,6 @@ export function Shader(props: ShaderProps) {
 			geometry.dispose()
 			renderer.dispose()
 		}
-		// biome-ignore lint/correctness/useExhaustiveDependencies: uniformsKey triggers remount when key set changes; uniformsProp values are captured at mount (real-time value updates are a v1 limitation).
 	}, [fragmentProp, uniformsKey])
 
 	return (

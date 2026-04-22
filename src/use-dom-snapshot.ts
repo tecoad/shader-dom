@@ -1,23 +1,33 @@
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
+import { type RefObject, useEffect, useRef, useState } from "react"
+import { observeInvalidations } from "./invalidation-observers"
+import { createScheduler } from "./scheduler"
 import { snapshotToCanvas } from "./snapshot"
 
 export interface UseDomSnapshotOptions {
 	interactive?: boolean
 	/**
-	 * Fired after every successful snapshot. In interactive mode this is
-	 * effectively per-frame; consumers throttle as needed.
+	 * Fired after every successful snapshot. With event-driven scheduling
+	 * this fires at most once per animation frame, and only when an event
+	 * (mutation, resize, pointer, focus, input, selection, transition tick,
+	 * or image load) actually invalidated the snapshot.
 	 */
 	onSnapshot?: (canvas: HTMLCanvasElement) => void
 }
 
 /**
- * Runs the snapshot pipeline against a ref'd DOM element and returns
- * the backing canvas. Interactive mode runs a requestAnimationFrame loop;
- * non-interactive runs on mount + MutationObserver + ResizeObserver.
+ * Drives the DOM snapshot pipeline for a ref'd element. Unlike a naive
+ * rAF loop, this hook is event-driven: observers (see
+ * `observeInvalidations`) fan into a single `scheduler.invalidate()`,
+ * which coalesces multiple events in one frame into a single snapshot
+ * call. When the DOM is idle, zero snapshot work happens.
  *
- * The returned canvas reference is stable across renders. Its content
- * updates in place — consumers using three.js CanvasTexture set needsUpdate
- * each frame to pick up changes.
+ * The transition-aware mini-loop keeps invalidating each frame while
+ * CSS transitions are active (tracked via `transitionrun`/`transitionend`)
+ * so transition intermediates get sampled and applied to the clone.
+ *
+ * The returned canvas reference is stable across renders; its contents
+ * update in place. three.js consumers wrap it in CanvasTexture and set
+ * `needsUpdate = true` once per frame.
  */
 export function useDomSnapshot(
 	sourceRef: RefObject<HTMLElement | null>,
@@ -28,69 +38,69 @@ export function useDomSnapshot(
 	const snapshotting = useRef(false)
 	const onSnapshotRef = useRef(onSnapshot)
 	onSnapshotRef.current = onSnapshot
-	// Only exposed to consumers after the first successful snapshot populates
-	// the canvas — a freshly-created <canvas> has default 300×150 dims and
-	// transparent pixels, which would make consumers think there's content.
 	const [exposedCanvas, setExposedCanvas] = useState<HTMLCanvasElement | null>(
 		null
 	)
 
-	// Lazy-init backing canvas on first render (SSR-safe).
 	if (canvasRef.current === null && typeof document !== "undefined") {
 		canvasRef.current = document.createElement("canvas")
 	}
-
-	const snapshot = useCallback(() => {
-		const el = sourceRef.current
-		const target = canvasRef.current
-		if (!el || !target || snapshotting.current) return
-		snapshotting.current = true
-		snapshotToCanvas(el, target, () => {
-			snapshotting.current = false
-			// Expose canvas only once the first successful snapshot lands.
-			setExposedCanvas(prev => prev ?? target)
-			onSnapshotRef.current?.(target)
-		})
-	}, [sourceRef])
 
 	useEffect(() => {
 		const el = sourceRef.current
 		const target = canvasRef.current
 		if (!el || !target) return
 
-		if (interactive) {
-			let running = true
-			const loop = () => {
-				if (!running) return
-				snapshot()
-				requestAnimationFrame(loop)
+		let observers: ReturnType<typeof observeInvalidations> | null = null
+		let transitionLoopHandle: number | null = null
+
+		const runSnapshot = async () => {
+			if (!el || !target || snapshotting.current) return
+			snapshotting.current = true
+			try {
+				await snapshotToCanvas(
+					el,
+					target,
+					() => {
+						setExposedCanvas(prev => prev ?? target)
+						onSnapshotRef.current?.(target)
+					},
+					{
+						captureTransitions: observers?.hasActiveTransitions() ?? false,
+					}
+				)
+			} finally {
+				snapshotting.current = false
 			}
-			requestAnimationFrame(loop)
-			return () => {
-				running = false
+
+			// Transition-aware mini-loop: while any transition is active,
+			// schedule another invalidation next frame so intermediates sample.
+			if (observers?.hasActiveTransitions()) {
+				transitionLoopHandle = requestAnimationFrame(() =>
+					scheduler.invalidate()
+				)
 			}
 		}
 
-		requestAnimationFrame(snapshot)
+		const scheduler = createScheduler(runSnapshot)
 
-		const mutationObs = new MutationObserver(() =>
-			requestAnimationFrame(snapshot)
-		)
-		mutationObs.observe(el, {
-			childList: true,
-			subtree: true,
-			attributes: true,
-			characterData: true,
+		observers = observeInvalidations({
+			root: el,
+			onInvalidate: () => scheduler.invalidate(),
+			interactive,
 		})
 
-		const resizeObs = new ResizeObserver(() => requestAnimationFrame(snapshot))
-		resizeObs.observe(el)
+		// Initial snapshot — fire once on mount.
+		scheduler.invalidate()
 
 		return () => {
-			mutationObs.disconnect()
-			resizeObs.disconnect()
+			if (transitionLoopHandle !== null) {
+				cancelAnimationFrame(transitionLoopHandle)
+			}
+			scheduler.dispose()
+			observers?.dispose()
 		}
-	}, [snapshot, interactive, sourceRef])
+	}, [sourceRef, interactive])
 
 	return exposedCanvas
 }

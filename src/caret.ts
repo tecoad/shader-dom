@@ -1,3 +1,5 @@
+import { floorSubpixelTextMetrics } from "./snapshot"
+
 const INPUT_PROPS = [
 	"direction",
 	"boxSizing",
@@ -55,6 +57,11 @@ export function setupCaretRendering(
 		for (const prop of INPUT_PROPS) {
 			el.style[prop as any] = computed[prop as any]
 		}
+
+		// The snapshot pipeline floors sub-pixel text metrics before SVG
+		// rasterization; the caret clone must match or it drifts ahead of the
+		// rasterized text as the user types. Shared with snapshot.ts.
+		floorSubpixelTextMetrics(source, el)
 
 		// Only caret visible — text comes from the shader layer.
 		// Keep border WIDTH (affects content area with border-box) but hide visually.
