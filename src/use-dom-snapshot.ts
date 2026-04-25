@@ -12,6 +12,11 @@ export interface UseDomSnapshotOptions {
 	 * or image load) actually invalidated the snapshot.
 	 */
 	onSnapshot?: (canvas: HTMLCanvasElement) => void
+	/**
+	 * Cap the snapshot canvas DPR. See `SnapshotOptions.maxPixelRatio` for
+	 * the full rationale. Default: `Infinity`.
+	 */
+	maxPixelRatio?: number
 }
 
 /**
@@ -33,11 +38,15 @@ export function useDomSnapshot(
 	sourceRef: RefObject<HTMLElement | null>,
 	options: UseDomSnapshotOptions = {}
 ): HTMLCanvasElement | null {
-	const { interactive = false, onSnapshot } = options
+	const { interactive = false, onSnapshot, maxPixelRatio } = options
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const snapshotting = useRef(false)
 	const onSnapshotRef = useRef(onSnapshot)
 	onSnapshotRef.current = onSnapshot
+	// Refs so changing these props doesn't re-mount the entire snapshot
+	// pipeline — the next snapshot picks up the new value.
+	const maxPixelRatioRef = useRef(maxPixelRatio)
+	maxPixelRatioRef.current = maxPixelRatio
 	const [exposedCanvas, setExposedCanvas] = useState<HTMLCanvasElement | null>(
 		null
 	)
@@ -53,6 +62,25 @@ export function useDomSnapshot(
 
 		let observers: ReturnType<typeof observeInvalidations> | null = null
 		let transitionLoopHandle: number | null = null
+		// Throttle the transition-aware mini-loop to ~30fps. The previous
+		// every-frame cadence ran the full snapshot pipeline 18 times per 300ms
+		// transition, saturating Safari's main thread without producing visible
+		// improvement for `duration-300` transitions. 30fps = 9 samples per
+		// 300ms transition, indistinguishable to the eye.
+		const TRANSITION_MIN_INTERVAL_MS = 33
+		let lastTransitionInvalidateMs = 0
+
+		const tryTransitionInvalidate = () => {
+			if (!observers?.hasActiveTransitions()) return
+			const now = performance.now()
+			if (now - lastTransitionInvalidateMs >= TRANSITION_MIN_INTERVAL_MS) {
+				lastTransitionInvalidateMs = now
+				scheduler.invalidate()
+			} else {
+				// Throttled — wait one frame and re-check. Cheap; no snapshot work.
+				transitionLoopHandle = requestAnimationFrame(tryTransitionInvalidate)
+			}
+		}
 
 		const runSnapshot = async () => {
 			if (!el || !target || snapshotting.current) return
@@ -67,6 +95,7 @@ export function useDomSnapshot(
 					},
 					{
 						captureTransitions: observers?.hasActiveTransitions() ?? false,
+						maxPixelRatio: maxPixelRatioRef.current,
 					}
 				)
 			} finally {
@@ -74,11 +103,9 @@ export function useDomSnapshot(
 			}
 
 			// Transition-aware mini-loop: while any transition is active,
-			// schedule another invalidation next frame so intermediates sample.
+			// schedule a throttled re-invalidation so intermediates sample.
 			if (observers?.hasActiveTransitions()) {
-				transitionLoopHandle = requestAnimationFrame(() =>
-					scheduler.invalidate()
-				)
+				transitionLoopHandle = requestAnimationFrame(tryTransitionInvalidate)
 			}
 		}
 

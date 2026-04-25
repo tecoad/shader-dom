@@ -6,6 +6,14 @@ import { useInteractiveOverlay } from "./use-interactive-overlay"
 export interface HtmlTextureProps {
 	children: ReactNode
 	interactive?: boolean
+	/**
+	 * Cap the snapshot canvas DPR. The SVG raster + GPU upload scale with
+	 * pixel count, so on a Retina display lowering this to `1` cuts ~4× of
+	 * per-frame snapshot cost. Useful when the consuming shader already
+	 * blurs/distorts the texture (e.g. wave displacement). Default: full
+	 * `window.devicePixelRatio`.
+	 */
+	maxPixelRatio?: number
 }
 
 /**
@@ -35,6 +43,7 @@ export function HtmlTexture(props: HtmlTextureProps) {
 function HtmlTextureInner({
 	children,
 	interactive = false,
+	maxPixelRatio,
 	context,
 }: HtmlTextureProps & { context: ShaderContextValue }) {
 	const { overlayNode, overlayRef } = useInteractiveOverlay({
@@ -45,6 +54,7 @@ function HtmlTextureInner({
 
 	const snapshotCanvas = useDomSnapshot(overlayRef, {
 		interactive,
+		maxPixelRatio,
 		onSnapshot: canvas => context.notifySnapshotUpdate(canvas),
 	})
 

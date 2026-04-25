@@ -579,6 +579,18 @@ export interface SnapshotOptions {
 	 * hasn't balanced it — see `observeInvalidations`.
 	 */
 	captureTransitions?: boolean
+	/**
+	 * Cap the device pixel ratio used to size the snapshot canvas. The SVG
+	 * is rasterized at `min(window.devicePixelRatio, maxPixelRatio)` × the
+	 * element's CSS size; lowering this trades visual sharpness for a
+	 * proportional reduction in `imgDecode`, `drawImage`, and the
+	 * subsequent `texImage2D` upload (each scales with pixel count).
+	 *
+	 * Useful when the snapshot is consumed by a shader that already blurs
+	 * or distorts the texture (e.g. wave displacement) — the lost detail
+	 * is invisible. Default: `Infinity` (use full devicePixelRatio).
+	 */
+	maxPixelRatio?: number
 }
 
 /**
@@ -634,7 +646,10 @@ export async function snapshotToCanvas(
 	// Cache hit: byte-identical SVG as last snapshot AND target dimensions
 	// unchanged → skip rasterize + GPU upload + onComplete notification.
 	const prevSvg = svgCache.get(targetCanvas)
-	const dpr = window.devicePixelRatio || 1
+	const dpr = Math.min(
+		window.devicePixelRatio || 1,
+		options.maxPixelRatio ?? Number.POSITIVE_INFINITY
+	)
 	const expectedW = width * dpr
 	const expectedH = height * dpr
 	if (
@@ -650,9 +665,24 @@ export async function snapshotToCanvas(
 	img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`
 	await img.decode()
 
-	targetCanvas.width = expectedW
-	targetCanvas.height = expectedH
+	// Reassigning canvas.width/height — even to the same value — resets the
+	// bitmap, which forces the GL driver to re-upload the full texture on
+	// the next `texImage2D`. Skip the assignment when nothing changed.
+	if (
+		targetCanvas.width !== expectedW ||
+		targetCanvas.height !== expectedH
+	) {
+		targetCanvas.width = expectedW
+		targetCanvas.height = expectedH
+	}
+
 	const ctx = targetCanvas.getContext("2d")!
+	// `ctx.scale` accumulates across draws; without resetting first, every
+	// subsequent snapshot would draw at dpr², dpr³, etc. The previous code
+	// got away with this because reassigning canvas.width/height (above)
+	// implicitly resets the transform — now that we skip that on no-op
+	// resizes, we must reset explicitly.
+	ctx.setTransform(1, 0, 0, 1, 0, 0)
 	ctx.scale(dpr, dpr)
 	ctx.clearRect(0, 0, width, height)
 	ctx.drawImage(img, 0, 0, width, height)

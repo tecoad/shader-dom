@@ -15,7 +15,7 @@ const liquid = liquidPreset({
 	displacementScale: 10,
 	rain: true,
 	rainTime: 2,
-	simulationStepsPerFrame: 5,
+	simulationStepsPerFrame: 3,
 })
 
 export default function Demo3() {
@@ -23,7 +23,7 @@ export default function Demo3() {
 
 	return (
 		<Shader scene={liquid.scene}>
-			<HtmlTexture interactive>
+			<HtmlTexture interactive maxPixelRatio={1}>
 				<div className="relative h-dvh w-dvw overflow-hidden flex flex-col items-center justify-center bg-[white] text-[#1d1d1f] font-sans">
 					{/* Ambient light gradients — pre-multiplied into #fafafa to avoid the
 					    mix-blend-multiply limitation inside SVG foreignObject. Values hand-

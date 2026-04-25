@@ -9,11 +9,19 @@ import { useInteractiveOverlay } from "../use-interactive-overlay"
 export interface HtmlTextureProps {
 	children: ReactNode
 	interactive?: boolean
+	/**
+	 * Cap the snapshot canvas DPR. The SVG raster + GPU upload scale with
+	 * pixel count; lowering to `1` cuts ~4× of per-frame snapshot cost on
+	 * Retina. Useful when the consuming shader already blurs/distorts the
+	 * texture. Default: full `window.devicePixelRatio`.
+	 */
+	maxPixelRatio?: number
 }
 
 export function HtmlTexture({
 	children,
 	interactive = false,
+	maxPixelRatio,
 }: HtmlTextureProps) {
 	const context = useContext(ShaderContext)
 	const reactId = useId()
@@ -43,7 +51,10 @@ export function HtmlTexture({
 		fill: true,
 	})
 
-	const snapshotCanvas = useDomSnapshot(overlayRef, { interactive })
+	const snapshotCanvas = useDomSnapshot(overlayRef, {
+		interactive,
+		maxPixelRatio,
+	})
 
 	// Register a fragment node in the shaders package's graph, sampling
 	// a CanvasTexture wrapping the snapshot canvas.
