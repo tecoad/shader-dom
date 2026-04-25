@@ -8,34 +8,40 @@ import { liquidPreset } from "shader-dom/presets/liquid"
  * tagline below a thin divider, #fafafa base with cool+warm radial gradients
  * in multiply blend (same as the Downloads generateTextImage).
  */
-const liquidScene = liquidPreset({
+const liquid = liquidPreset({
 	pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+	cursorDrops: false,
+	envMapIntensity: 0.8,
+	displacementScale: 10,
+	rain: true,
+	rainTime: 2,
+	simulationStepsPerFrame: 5,
 })
 
 export default function Demo3() {
 	const [count, setCount] = useState(0)
 
 	return (
-		<Shader scene={liquidScene}>
+		<Shader scene={liquid.scene}>
 			<HtmlTexture interactive>
-				<div className="relative h-dvh w-dvw overflow-hidden flex flex-col items-center justify-center bg-[#fafafa] text-[#1d1d1f] font-sans">
+				<div className="relative h-dvh w-dvw overflow-hidden flex flex-col items-center justify-center bg-[white] text-[#1d1d1f] font-sans">
 					{/* Ambient light gradients — pre-multiplied into #fafafa to avoid the
 					    mix-blend-multiply limitation inside SVG foreignObject. Values hand-
 					    tuned to match the visual of the original canvas-2D version at
 					    /Users/matheus/Downloads/liquid-effect-animation-main. */}
-					<div
+					{/* <div
 						className="absolute inset-0 pointer-events-none"
 						style={{
 							backgroundImage: `
 								radial-gradient(circle at 50% 10%, #dce1f0 0%, #fafafa 60%),
 								radial-gradient(circle at 50% 95%, #f0e6dc 0%, #fafafa 50%)
 							`,
-							// backgroundBlendMode: "multiply",
+							backgroundBlendMode: "multiply",
 						}}
-					/>
+					/> */}
 
 					{/* Subtext (like generateTextImage's subText) */}
-					<div className="relative mb-[2vw] text-[max(11px,0.9vw)] font-semibold tracking-[0.25em] uppercase opacity-35">
+					<div className="relative mb-[2vw] text-[max(11px,0.9vw)] font-semibold tracking-[0.25em] uppercase">
 						Interactive UI Component
 					</div>
 
@@ -49,7 +55,7 @@ export default function Demo3() {
 					<div className="relative mt-[1.8vw] w-[60px] h-[0.5px] bg-[rgba(29,29,31,0.12)]" />
 
 					{/* Tagline (like generateTextImage's tagline) */}
-					<div className="relative mt-[1vw] text-[max(11px,1vw)] font-normal tracking-[0.02em] opacity-30">
+					<div className="relative mt-[1vw] text-[max(11px,1vw)] font-normal tracking-[0.02em]">
 						Built with Three.js &nbsp;•&nbsp; React &nbsp;•&nbsp; Tailwind CSS
 					</div>
 
@@ -57,7 +63,13 @@ export default function Demo3() {
 					<button
 						type="button"
 						className="relative mt-[3vw] px-8 py-4 bg-black text-white rounded-full hover:bg-[red] active:scale-95 duration-300 transition"
-						onClick={() => setCount(c => c + 1)}
+						onClick={e => {
+							setCount(c => c + 1)
+							const x = (e.clientX / window.innerWidth) * 2 - 1
+							const y = -(e.clientY / window.innerHeight) * 2 + 1
+							liquid.controls.drop(x, y)
+							liquid.controls.pulse(2.5, 800)
+						}}
 					>
 						Clicks: {count}
 					</button>
@@ -68,7 +80,7 @@ export default function Demo3() {
 						className="relative mt-[1.5vw] px-5 py-3 bg-white border border-[rgba(29,29,31,0.15)] rounded-full text-[15px] tracking-[0.01em] outline-none focus:border-[rgba(29,29,31,0.4)] transition w-[340px]"
 					/>
 					{/* Tagline (like generateTextImage's tagline) */}
-					<div className="relative mt-[1vw] text-[max(11px,1vw)] font-normal tracking-[0.02em] opacity-30">
+					<div className="relative mt-[1vw] text-[max(11px,1vw)] font-normal tracking-[0.02em]">
 						Built with Three.js &nbsp;•&nbsp; React &nbsp;•&nbsp; Tailwind CSS
 					</div>
 				</div>

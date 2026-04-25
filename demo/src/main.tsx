@@ -5,6 +5,7 @@ import App from "./App"
 import Demo1 from "./pages/demos/1"
 import Demo2 from "./pages/demos/2"
 import Demo3 from "./pages/demos/3"
+import Demo4 from "./pages/demos/4"
 import "./style.css"
 
 createRoot(document.getElementById("root")!).render(
@@ -15,6 +16,7 @@ createRoot(document.getElementById("root")!).render(
 				<Route path="demos/1" element={<Demo1 />} />
 				<Route path="demos/2" element={<Demo2 />} />
 				<Route path="demos/3" element={<Demo3 />} />
+				<Route path="demos/4" element={<Demo4 />} />
 			</Routes>
 		</BrowserRouter>
 	</StrictMode>
