@@ -20,4 +20,10 @@ describe("liquidPreset", () => {
 		// at the !app guard; the full URL-in-effect path is verified in the demo.
 		expect(() => handle.controls.setLighting("softbox")).not.toThrow()
 	})
+
+	it("setReflectionOnSlopeOnly is a no-op before mount (does not throw)", () => {
+		const handle = liquidPreset({ reflectionOnSlopeOnly: true })
+		expect(() => handle.controls.setReflectionOnSlopeOnly(false)).not.toThrow()
+		expect(() => handle.controls.setReflectionOnSlopeOnly(true)).not.toThrow()
+	})
 })

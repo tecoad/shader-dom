@@ -84,6 +84,29 @@ export interface LiquidPresetOptions {
 	 * Reasonable range: ~0.97 (very short) … 0.9995 (very long). Default: 0.995
 	 */
 	attenuation?: number
+	/**
+	 * Gate env-map specular reflections by surface slope. When true, flat regions
+	 * (calm water, ambient ripples) receive zero env contribution — the underlying
+	 * snapshot shows through cleanly with no PMREM-blur halos or reflection tint —
+	 * and only steep wave crests light up with the configured `lighting`.
+	 *
+	 * Combine with any `lighting` mode. Default: false
+	 */
+	reflectionOnSlopeOnly?: boolean
+	/**
+	 * `[edge0, edge1]` for the slope gate's `smoothstep`. The slope metric is
+	 * `length(transformedNormal.xy)` — 0 on flat water, rising with tilt.
+	 *
+	 * - `edge0`: slopes below this are fully gated out (snapshot shows through).
+	 *   Raise to tolerate stronger ambient ripples without acquiring highlights.
+	 * - `edge1`: slopes above this get full env contribution (PBR + reflections).
+	 *   Lower to let gentler waves catch highlights; raise to require steeper
+	 *   crests.
+	 *
+	 * Only takes effect when `reflectionOnSlopeOnly` is true (or set to true at
+	 * runtime via `controls.setReflectionOnSlopeOnly`). Default: [0.05, 0.4]
+	 */
+	slopeGateRange?: [number, number]
 }
 
 /**
@@ -163,6 +186,16 @@ export interface LiquidControls {
 	 */
 	setAttenuation: (value: number) => void
 	/**
+	 * Toggle slope-gated reflections at runtime. See
+	 * `LiquidPresetOptions.reflectionOnSlopeOnly`. No-op until `<Shader>` mounts.
+	 */
+	setReflectionOnSlopeOnly: (on: boolean) => void
+	/**
+	 * Adjust the slope gate's `smoothstep` thresholds at runtime. See
+	 * `LiquidPresetOptions.slopeGateRange`. No-op until `<Shader>` mounts.
+	 */
+	setSlopeGateRange: (range: [number, number]) => void
+	/**
 	 * Switch lighting mode at runtime. No-op when an `envMap` URL was provided
 	 * at construction (the user's explicit choice wins; construct a new handle
 	 * to switch). No-op until `<Shader>` mounts.
@@ -190,6 +223,12 @@ interface LiquidApp {
 			roughness: number
 			envMapIntensity: number
 			envMap: Texture | null
+			needsUpdate: boolean
+			onBeforeCompile?: (shader: {
+				uniforms: Record<string, { value: unknown }>
+				fragmentShader: string
+				vertexShader: string
+			}) => void
 		}
 		uniforms: { displacementScale: { value: number } }
 		attenuation: number
@@ -222,7 +261,12 @@ function buildSoftboxEnvMap(renderer: WebGLRenderer): Texture {
 	// so values >1 act as emissive intensity even with MeshBasicMaterial.
 	const mat = new MeshBasicMaterial({ color: new Color(20, 20, 20) })
 	const ring = new Mesh(geo, mat)
-	ring.position.y = 6
+	// Tube centered on the horizon (y=0) so its angular extent from origin
+	// straddles the equator (~±18° elevation). Flat / lightly-rippled regions
+	// reflect well above this band and stay uniformly gray — only steep wave
+	// crests (normal tilt ≳ 36°) reflect down into the bright tube. Result:
+	// highlights ride on actual waves; the calm "background" stays clean.
+	ring.position.y = 0
 	ring.rotation.x = Math.PI / 2
 	scene.add(ring)
 
@@ -272,6 +316,8 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		simulationStepsPerFrame = 1,
 		lighting = "studio",
 		attenuation,
+		reflectionOnSlopeOnly = false,
+		slopeGateRange = [0.05, 0.4],
 	} = options
 
 	// Mutable so `setSimulationStepsPerFrame` can change it without re-wrapping
@@ -298,6 +344,12 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 	// Construct a new handle to switch.
 	const envMapUrlInEffect = envMap !== undefined
 	let activeLighting: "studio" | "softbox" = lighting
+	// Uniform references shared with the chained onBeforeCompile. `uSlopeGate`
+	// toggles the gate (0 = bypass, 1 = full gate); `uSlopeGateMin/Max` set the
+	// smoothstep edges. Captured at mount.
+	let slopeGateUniform: { value: number } | null = null
+	let slopeGateMinUniform: { value: number } | null = null
+	let slopeGateMaxUniform: { value: number } | null = null
 
 	const scene: ShaderScene = canvas => {
 		const created = (LiquidBackground as (c: HTMLCanvasElement) => LiquidApp)(
@@ -327,6 +379,51 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 			cachedSoftboxEnvMap = buildSoftboxEnvMap(created.three.renderer)
 			created.liquidPlane.setEnvMap(cachedSoftboxEnvMap)
 		}
+
+		// Chain a slope-gate onto whatever onBeforeCompile the bundle already
+		// installed (the bundle uses one for displacement). The gate multiplies
+		// `radiance` (env-map specular contribution) by smoothstep(slope), so
+		// flat surfaces get zero env reflection while wave crests get the full
+		// reflection. World-space normal is recovered with inverseTransformDirection.
+		const material = created.liquidPlane.material
+		const originalOnBeforeCompile = material.onBeforeCompile
+		const gateU = { value: reflectionOnSlopeOnly ? 1 : 0 }
+		const minU = { value: slopeGateRange[0] }
+		const maxU = { value: slopeGateRange[1] }
+		material.onBeforeCompile = shader => {
+			if (originalOnBeforeCompile) originalOnBeforeCompile(shader)
+			shader.uniforms.uSlopeGate = gateU
+			shader.uniforms.uSlopeGateMin = minU
+			shader.uniforms.uSlopeGateMax = maxU
+			shader.fragmentShader =
+				`uniform float uSlopeGate;\nuniform float uSlopeGateMin;\nuniform float uSlopeGateMax;\n${shader.fragmentShader}`
+			// Single injection just before tonemapping. The bundle's earlier chunk
+			// replacement leaves `transformedNormal` (a tangent-space normal built
+			// from the displacement map's BA channels) in scope; `length(.xy)` is
+			// the planar slope — 0 on flat water, rises with tilt — and works
+			// without any view/camera transform.
+			//
+			// When `uSlopeGate = 1` and the surface is flat, we replace the PBR
+			// output with the raw `diffuseColor`, bypassing both the env-specular
+			// (the soft circle from PMREM blur leaking into the upper hemisphere)
+			// AND the iblIrradiance modulation that would otherwise dim the
+			// snapshot toward whatever gray the env's diffuse averages to.
+			//
+			// Identifiers must avoid the leading `__` prefix — GLSL reserves it.
+			shader.fragmentShader = shader.fragmentShader.replace(
+				"#include <tonemapping_fragment>",
+				`{
+  float liquidSlope = length(transformedNormal.xy);
+  float liquidGate = mix(1.0, smoothstep(uSlopeGateMin, uSlopeGateMax, liquidSlope), uSlopeGate);
+  gl_FragColor.rgb = mix(diffuseColor.rgb, gl_FragColor.rgb, liquidGate);
+}
+#include <tonemapping_fragment>`
+			)
+		}
+		material.needsUpdate = true
+		slopeGateUniform = gateU
+		slopeGateMinUniform = minU
+		slopeGateMaxUniform = maxU
 
 		// Wrap `onBeforeRender` to drive extra wave-sim steps per frame.
 		// `liquid1` already sets it inside its factory (rain tick + one
@@ -390,6 +487,9 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 					realAddDrop = null
 					mountedCanvas = null
 					originalEnvMap = null
+					slopeGateUniform = null
+					slopeGateMinUniform = null
+					slopeGateMaxUniform = null
 				}
 			},
 		}
@@ -440,6 +540,13 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		},
 		setAttenuation(value) {
 			if (app) app.liquidPlane.attenuation = value
+		},
+		setReflectionOnSlopeOnly(on) {
+			if (slopeGateUniform) slopeGateUniform.value = on ? 1 : 0
+		},
+		setSlopeGateRange(range) {
+			if (slopeGateMinUniform) slopeGateMinUniform.value = range[0]
+			if (slopeGateMaxUniform) slopeGateMaxUniform.value = range[1]
 		},
 		setLighting(mode) {
 			if (!app) return

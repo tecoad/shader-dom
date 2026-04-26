@@ -21,8 +21,8 @@ import { liquidPreset } from "shader-dom/presets/liquid"
 const liquid = liquidPreset({
 	pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
 	cursorDrops: false,
-	envMapIntensity: 0.3,
-	displacementScale: 10,
+	envMapIntensity: 1,
+	displacementScale: 20,
 	rain: false,
 	rainTime: 2,
 	simulationStepsPerFrame: 5,
@@ -30,6 +30,8 @@ const liquid = liquidPreset({
 	// Default is 0.995. Bumped here so ripples linger ~10× longer at this
 	// `simulationStepsPerFrame` — easier to feel the new knob in isolation.
 	attenuation: 0.985,
+	reflectionOnSlopeOnly: true,
+	slopeGateRange: [0.05, 0.1],
 })
 
 ;(window as unknown as { liquid: typeof liquid }).liquid = liquid
@@ -40,7 +42,7 @@ export default function Demo5() {
 	return (
 		<Shader scene={liquid.scene}>
 			<HtmlTexture interactive maxPixelRatio={1}>
-				<div className="relative h-dvh w-dvw overflow-hidden flex flex-col items-center justify-center bg-[white] text-[#1d1d1f] font-sans">
+				<div className="relative h-dvh w-dvw overflow-hidden flex flex-col items-center justify-center bg-[black] text-[white] font-sans">
 					{/* Subtext (like generateTextImage's subText) */}
 					<div className="relative mb-[2vw] text-[max(11px,0.9vw)] font-semibold tracking-[0.25em] uppercase">
 						Softbox Lighting
