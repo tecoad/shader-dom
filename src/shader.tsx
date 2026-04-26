@@ -183,6 +183,7 @@ export function Shader(props: ShaderProps) {
 	const contextValue = useMemo<ShaderContextValue>(
 		() => ({
 			registerSnapshot,
+			canvasRef,
 			layersContainerRef: containerRef,
 			notifySnapshotUpdate,
 			subscribeSnapshotUpdate,

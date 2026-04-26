@@ -10,6 +10,12 @@ export interface ShaderContextValue {
 	 */
 	registerSnapshot: (canvas: HTMLCanvasElement) => () => void
 	/**
+	 * Ref to the WebGL `<canvas>` element rendered by `<Shader>`. Exposed so
+	 * descendants (via `useShader()`) can convert viewport pixels into the
+	 * shader plane's NDC space without walking the DOM.
+	 */
+	canvasRef: RefObject<HTMLCanvasElement | null>
+	/**
 	 * Ref to the positioned ancestor where interactive overlay layers
 	 * (selection, caret, escape) are attached.
 	 */

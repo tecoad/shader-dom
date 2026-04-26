@@ -1,4 +1,20 @@
-import { CanvasTexture, SRGBColorSpace } from "three"
+import {
+	CanvasTexture,
+	Color,
+	Mesh,
+	MeshBasicMaterial,
+	PMREMGenerator,
+	Scene,
+	SRGBColorSpace,
+	type Texture,
+	TorusGeometry,
+	type WebGLRenderer,
+} from "three"
+import {
+	type ElementAnchor,
+	elementToNDC,
+	screenToNDC,
+} from "../../coords"
 import type { ShaderScene } from "../../shader"
 // @ts-expect-error — unpacked three.js bundle from `threejs-components`, no types shipped.
 // This file is ~525 KB; only imported when the consumer opts in via
@@ -44,6 +60,52 @@ export interface LiquidPresetOptions {
 	pixelRatio?: number | "auto"
 	/** Environment map URL for PBR reflections. Default: none (dark reflections). */
 	envMap?: string
+	/**
+	 * Built-in lighting mode used when no `envMap` URL is provided.
+	 * - "studio" (default): bundled bake — bright PointLight overhead, central hotspot.
+	 * - "softbox": HDR torus ring above the surface — directional highlights on
+	 *   wave crests, no central hotspot, homogeneous in azimuth.
+	 *
+	 * Ignored when `envMap` is set; user-supplied env maps always win.
+	 * Default: "studio"
+	 */
+	lighting?: "studio" | "softbox"
+	/**
+	 * Wave-velocity damping per simulation step. The wave-sim multiplies each
+	 * cell's velocity by this value every step — values closer to 1 make ripples
+	 * dissipate slower, values further from 1 make them fade faster.
+	 *
+	 * The effective decay per visual frame compounds with `simulationStepsPerFrame`:
+	 * at 60fps with 1 step/frame the half-life is `ln(0.5)/(60·ln(attenuation))` seconds
+	 * (~2.3s at the default 0.995). Bumping `simulationStepsPerFrame` shortens
+	 * decay AND speeds up wavefront propagation; tune `attenuation` to control
+	 * decay independently.
+	 *
+	 * Reasonable range: ~0.97 (very short) … 0.9995 (very long). Default: 0.995
+	 */
+	attenuation?: number
+}
+
+/**
+ * Anything that can stand in for a screen-space point: a real DOM event, a
+ * synthetic React event, or a hand-built `{ clientX, clientY }` literal.
+ */
+export type ScreenPoint =
+	| { clientX: number; clientY: number }
+	| MouseEvent
+	| PointerEvent
+	| Touch
+
+export interface DropAtOptions {
+	/** Forwarded to the underlying drop. Defaults to `0.04`. */
+	size?: number
+	/** Forwarded to the underlying drop. Defaults to `0.05`. */
+	strength?: number
+	/**
+	 * When the target is an `Element`, which point of its bounding box to fire
+	 * the ripple from. Ignored for `ScreenPoint` targets. Defaults to `"center"`.
+	 */
+	anchor?: ElementAnchor
 }
 
 export interface LiquidControls {
@@ -66,8 +128,25 @@ export interface LiquidControls {
 	 * with y up). Bypasses the `cursorDrops` filter, so it always fires.
 	 * Defaults: center of the surface, medium-sized splash. No-op until
 	 * `<Shader>` mounts.
+	 *
+	 * For screen-space input (mouse events, button centers), prefer `dropAt`
+	 * — it handles canvas-bounds conversion automatically and works for shaders
+	 * that aren't fullscreen.
 	 */
 	drop: (x?: number, y?: number, size?: number, strength?: number) => void
+	/**
+	 * Drop a ripple at a screen-space point or DOM element. Converts to NDC
+	 * against the mounted canvas's bounds, so it works whether the shader is
+	 * fullscreen or confined to a smaller container.
+	 *
+	 * - Pass an `Element` to fire from its center (or anchor, via `opts.anchor`).
+	 *   Works for keyboard-triggered clicks where `clientX/Y` would be `0`.
+	 * - Pass a `MouseEvent`/`PointerEvent`/`Touch` to fire from the pointer.
+	 * - Pass any `{ clientX, clientY }` literal for fully custom positioning.
+	 *
+	 * No-op until `<Shader>` mounts.
+	 */
+	dropAt: (target: Element | ScreenPoint, opts?: DropAtOptions) => void
 	/**
 	 * Change simulation steps per frame at runtime. Integer ≥ 1.
 	 * See `LiquidPresetOptions.simulationStepsPerFrame`.
@@ -78,6 +157,17 @@ export interface LiquidControls {
 	 * values >1 will exaggerate the built-in studio lighting.
 	 */
 	setEnvMapIntensity: (value: number) => void
+	/**
+	 * Set the wave-velocity damping per simulation step. See
+	 * `LiquidPresetOptions.attenuation` for the exact role.
+	 */
+	setAttenuation: (value: number) => void
+	/**
+	 * Switch lighting mode at runtime. No-op when an `envMap` URL was provided
+	 * at construction (the user's explicit choice wins; construct a new handle
+	 * to switch). No-op until `<Shader>` mounts.
+	 */
+	setLighting: (mode: "studio" | "softbox") => void
 	/** Toggle raindrops at runtime. */
 	setRain: (on: boolean) => void
 }
@@ -88,7 +178,7 @@ export interface LiquidHandle {
 }
 
 interface ThreeWrapper {
-	renderer: { setPixelRatio: (r: number) => void }
+	renderer: WebGLRenderer
 	onBeforeRender?: (info: { delta: number }) => void
 }
 
@@ -99,9 +189,12 @@ interface LiquidApp {
 			metalness: number
 			roughness: number
 			envMapIntensity: number
+			envMap: Texture | null
 		}
 		uniforms: { displacementScale: { value: number } }
+		attenuation: number
 		setImage: (texture: unknown) => void
+		setEnvMap: (texture: Texture | null) => void
 		addDrop: (x: number, y: number, size: number, strength: number) => void
 		update: () => void
 	}
@@ -109,6 +202,38 @@ interface LiquidApp {
 	setRainTime: (seconds: number) => void
 	loadEnvMap: (url: string) => Promise<void>
 	dispose: () => void
+}
+
+/**
+ * Build a procedural softbox env map: a bright HDR torus ring in the upper
+ * hemisphere over a medium-gray background, prefiltered for PBR via PMREM.
+ *
+ * Produces homogeneous reflections — flat regions get medium uniform brightness,
+ * wave crests get directional highlights uniformly distributed in azimuth.
+ *
+ * Caller owns the returned texture and is responsible for disposing it.
+ */
+function buildSoftboxEnvMap(renderer: WebGLRenderer): Texture {
+	const scene = new Scene()
+	scene.background = new Color(0.13, 0.13, 0.13)
+
+	const geo = new TorusGeometry(8, 2, 8, 32)
+	// HDR-bright color: PMREMGenerator bakes into a half-float render target,
+	// so values >1 act as emissive intensity even with MeshBasicMaterial.
+	const mat = new MeshBasicMaterial({ color: new Color(20, 20, 20) })
+	const ring = new Mesh(geo, mat)
+	ring.position.y = 6
+	ring.rotation.x = Math.PI / 2
+	scene.add(ring)
+
+	const pmrem = new PMREMGenerator(renderer)
+	const target = pmrem.fromScene(scene, 0.04)
+
+	geo.dispose()
+	mat.dispose()
+	pmrem.dispose()
+
+	return target.texture
 }
 
 /**
@@ -145,6 +270,8 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		cursorDrops = true,
 		envMapIntensity,
 		simulationStepsPerFrame = 1,
+		lighting = "studio",
+		attenuation,
 	} = options
 
 	// Mutable so `setSimulationStepsPerFrame` can change it without re-wrapping
@@ -158,6 +285,19 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 	let realAddDrop:
 		| ((x: number, y: number, size: number, strength: number) => void)
 		| null = null
+	// Captured at scene mount so screen-space helpers (`dropAt`) can convert
+	// `clientX/Y` against the actual canvas bounds — required for shaders that
+	// don't fill the viewport.
+	let mountedCanvas: HTMLCanvasElement | null = null
+	// Captured at scene mount so `setLighting("studio")` can restore the
+	// bundle's baked env map without rebuilding it.
+	let originalEnvMap: Texture | null = null
+	let cachedSoftboxEnvMap: Texture | null = null
+	// Once the user supplies an envMap URL, that's their explicit lighting
+	// choice for this handle's lifetime — `setLighting` becomes a no-op.
+	// Construct a new handle to switch.
+	const envMapUrlInEffect = envMap !== undefined
+	let activeLighting: "studio" | "softbox" = lighting
 
 	const scene: ShaderScene = canvas => {
 		const created = (LiquidBackground as (c: HTMLCanvasElement) => LiquidApp)(
@@ -165,6 +305,7 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		)
 		app = created
 		realAddDrop = created.liquidPlane.addDrop.bind(created.liquidPlane)
+		mountedCanvas = canvas
 
 		const resolvedPixelRatio =
 			pixelRatio === "auto" ? window.devicePixelRatio || 1 : pixelRatio
@@ -175,6 +316,17 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		created.liquidPlane.uniforms.displacementScale.value = displacementScale
 		if (envMapIntensity !== undefined)
 			created.liquidPlane.material.envMapIntensity = envMapIntensity
+		if (attenuation !== undefined)
+			created.liquidPlane.attenuation = attenuation
+
+		// Capture the bundle's baked studio env map before any other change
+		// touches it — needed so `setLighting("studio")` can restore without rebake.
+		originalEnvMap = created.liquidPlane.material.envMap
+
+		if (!envMapUrlInEffect && lighting === "softbox") {
+			cachedSoftboxEnvMap = buildSoftboxEnvMap(created.three.renderer)
+			created.liquidPlane.setEnvMap(cachedSoftboxEnvMap)
+		}
 
 		// Wrap `onBeforeRender` to drive extra wave-sim steps per frame.
 		// `liquid1` already sets it inside its factory (rain tick + one
@@ -226,12 +378,18 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 					pulseRaf = 0
 				}
 				if (tex) tex.dispose()
+				if (cachedSoftboxEnvMap) {
+					cachedSoftboxEnvMap.dispose()
+					cachedSoftboxEnvMap = null
+				}
 				created.dispose()
 				// Guard against out-of-order disposes when the same handle
 				// is mounted/unmounted in overlapping cycles (StrictMode, etc).
 				if (app === created) {
 					app = null
 					realAddDrop = null
+					mountedCanvas = null
+					originalEnvMap = null
 				}
 			},
 		}
@@ -264,11 +422,38 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		drop(x = 0, y = 0, size = 0.04, strength = 0.05) {
 			realAddDrop?.(x, y, size, strength)
 		},
+		dropAt(target, opts) {
+			if (!realAddDrop || !mountedCanvas) return
+			const size = opts?.size ?? 0.04
+			const strength = opts?.strength ?? 0.05
+			const [x, y] =
+				target instanceof Element
+					? elementToNDC(mountedCanvas, target, opts?.anchor)
+					: screenToNDC(mountedCanvas, target.clientX, target.clientY)
+			realAddDrop(x, y, size, strength)
+		},
 		setSimulationStepsPerFrame(value) {
 			extraStepsPerFrame = Math.max(1, Math.floor(value)) - 1
 		},
 		setEnvMapIntensity(value) {
 			if (app) app.liquidPlane.material.envMapIntensity = value
+		},
+		setAttenuation(value) {
+			if (app) app.liquidPlane.attenuation = value
+		},
+		setLighting(mode) {
+			if (!app) return
+			if (envMapUrlInEffect) return
+			if (mode === activeLighting) return
+			activeLighting = mode
+			if (mode === "softbox") {
+				if (!cachedSoftboxEnvMap) {
+					cachedSoftboxEnvMap = buildSoftboxEnvMap(app.three.renderer)
+				}
+				app.liquidPlane.setEnvMap(cachedSoftboxEnvMap)
+			} else {
+				app.liquidPlane.setEnvMap(originalEnvMap)
+			}
 		},
 		setRain(on) {
 			if (app) app.setRain(on)
