@@ -1,6 +1,13 @@
 export interface InvalidationObservers {
-	/** True while one or more CSS transitions are active inside `root`. */
-	hasActiveTransitions(): boolean
+	/**
+	 * True while one or more CSS transitions OR Web Animations API
+	 * animations (Motion, GSAP, CSS @keyframes) are running inside `root`.
+	 *
+	 * The caller's transition-aware loop consults this each frame and keeps
+	 * invalidating while it's true — guarantees per-frame snapshots so
+	 * intermediate animation states reach the rasterizer.
+	 */
+	hasActiveAnimations(): boolean
 	/** Detach all observers and listeners. */
 	dispose(): void
 }
@@ -30,7 +37,7 @@ export interface ObserveInvalidationsOptions {
  * Transition tracking:
  *  - `transitionrun` increments a counter
  *  - `transitionend` / `transitioncancel` decrements (clamped at 0)
- *  - `hasActiveTransitions()` returns counter > 0
+ *  - `hasActiveAnimations()` returns counter > 0
  *  - While active, the caller keeps invalidating each frame so the snapshot
  *    samples transition intermediates via `applyTransitionIntermediates`.
  */
@@ -56,9 +63,24 @@ export function observeInvalidations(
 	ro.observe(root)
 	disposers.push(() => ro.disconnect())
 
+	const hasActiveAnimations = (): boolean => {
+		if (transitionCount > 0) return true
+		// `getAnimations({subtree: true})` covers WAAPI, CSS transitions, and
+		// CSS animations regardless of who started them (Motion, GSAP, etc.).
+		// Using it gates the per-frame invalidation loop so animations that
+		// don't fire DOM events (WAAPI on transform/opacity/filter) still
+		// drive the snapshot pipeline forward each frame.
+		if (typeof root.getAnimations !== "function") return false
+		const anims = root.getAnimations({ subtree: true })
+		for (const a of anims) {
+			if (a.playState === "running") return true
+		}
+		return false
+	}
+
 	if (!interactive) {
 		return {
-			hasActiveTransitions: () => false,
+			hasActiveAnimations,
 			dispose: () => disposers.forEach(fn => fn()),
 		}
 	}
@@ -128,7 +150,7 @@ export function observeInvalidations(
 	})
 
 	return {
-		hasActiveTransitions: () => transitionCount > 0,
+		hasActiveAnimations,
 		dispose: () => disposers.forEach(fn => fn()),
 	}
 }

@@ -22,19 +22,19 @@ describe("observeInvalidations — transition counter", () => {
 			onInvalidate,
 			interactive: true,
 		})
-		expect(observers.hasActiveTransitions()).toBe(false)
+		expect(observers.hasActiveAnimations()).toBe(false)
 
 		root.dispatchEvent(new Event("transitionrun", { bubbles: true }))
-		expect(observers.hasActiveTransitions()).toBe(true)
+		expect(observers.hasActiveAnimations()).toBe(true)
 
 		root.dispatchEvent(new Event("transitionrun", { bubbles: true }))
-		expect(observers.hasActiveTransitions()).toBe(true)
+		expect(observers.hasActiveAnimations()).toBe(true)
 
 		root.dispatchEvent(new Event("transitionend", { bubbles: true }))
-		expect(observers.hasActiveTransitions()).toBe(true)
+		expect(observers.hasActiveAnimations()).toBe(true)
 
 		root.dispatchEvent(new Event("transitionend", { bubbles: true }))
-		expect(observers.hasActiveTransitions()).toBe(false)
+		expect(observers.hasActiveAnimations()).toBe(false)
 
 		observers.dispose()
 		document.body.removeChild(root)
@@ -50,13 +50,13 @@ describe("observeInvalidations — transition counter", () => {
 		})
 
 		root.dispatchEvent(new Event("transitionend", { bubbles: true }))
-		expect(observers.hasActiveTransitions()).toBe(false)
+		expect(observers.hasActiveAnimations()).toBe(false)
 
 		observers.dispose()
 		document.body.removeChild(root)
 	})
 
-	it("returns false from hasActiveTransitions when not interactive", () => {
+	it("returns false from hasActiveAnimations when not interactive", () => {
 		const root = document.createElement("div")
 		document.body.appendChild(root)
 		const observers = observeInvalidations({
@@ -66,7 +66,7 @@ describe("observeInvalidations — transition counter", () => {
 		})
 
 		root.dispatchEvent(new Event("transitionrun", { bubbles: true }))
-		expect(observers.hasActiveTransitions()).toBe(false)
+		expect(observers.hasActiveAnimations()).toBe(false)
 
 		observers.dispose()
 		document.body.removeChild(root)

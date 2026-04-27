@@ -5,9 +5,7 @@ import {
 	useRef,
 	useState,
 } from "react"
-import { setupCaretRendering } from "./caret"
 import { EscapeLayerContext } from "./escape-layer-context"
-import { setupSelectionHighlights } from "./selection"
 
 export interface UseInteractiveOverlayOptions {
 	interactive: boolean
@@ -35,9 +33,7 @@ export interface UseInteractiveOverlayResult {
 
 /**
  * Builds the invisible interactive overlay DOM and wires up:
- *  - Selection highlight layer (z-index 1)
  *  - Escape layer (z-index 3) with EscapeLayerContext provision
- *  - Caret rendering layer (z-index 4)
  *
  * All layers attach to `layersContainerRef.current`. The overlay itself
  * (z-index 2) is rendered inline and is where children actually mount.
@@ -50,46 +46,6 @@ export function useInteractiveOverlay({
 }: UseInteractiveOverlayOptions): UseInteractiveOverlayResult {
 	const overlayRef = useRef<HTMLDivElement>(null)
 	const [escapeLayer, setEscapeLayer] = useState<HTMLElement | null>(null)
-
-	// Selection highlight layer
-	useEffect(() => {
-		if (!interactive) return
-		const overlay = overlayRef.current
-		const container = layersContainerRef.current
-		if (!overlay || !container) return
-
-		const layer = document.createElement("div")
-		layer.style.cssText =
-			"position:absolute;inset:0;pointer-events:none;z-index:1;"
-		container.appendChild(layer)
-
-		const cleanup = setupSelectionHighlights(overlay, layer)
-
-		return () => {
-			cleanup()
-			layer.remove()
-		}
-	}, [interactive, layersContainerRef])
-
-	// Caret rendering layer
-	useEffect(() => {
-		if (!interactive) return
-		const overlay = overlayRef.current
-		const container = layersContainerRef.current
-		if (!overlay || !container) return
-
-		const layer = document.createElement("div")
-		layer.style.cssText =
-			"position:absolute;inset:0;pointer-events:none;z-index:4;"
-		container.appendChild(layer)
-
-		const cleanup = setupCaretRendering(overlay, layer)
-
-		return () => {
-			cleanup()
-			layer.remove()
-		}
-	}, [interactive, layersContainerRef])
 
 	// Escape layer (always present, used via EscapeLayerContext)
 	useEffect(() => {

@@ -1,4 +1,5 @@
 import { decompressFrames, parseGIF } from "gifuct-js"
+import { injectCaretAndSelection } from "./caret"
 
 const svgCache = new WeakMap<HTMLCanvasElement, string>()
 
@@ -570,6 +571,44 @@ function freezeResolvedTextMetrics(
 	}
 }
 
+const ANIMATED_PROPS = ["transform", "opacity", "filter"] as const
+
+/**
+ * Copies the *currently animated* values of `transform`, `opacity`, and
+ * `filter` from any original element with active animations onto its clone.
+ *
+ * `cloneNode()` preserves HTML attributes and DOM properties but NOT the
+ * runtime state of the Web Animations API (WAAPI). Modern animation libraries
+ * (Motion, GSAP, native CSS transitions/animations) drive hardware-accelerated
+ * properties via WAAPI — values that only appear in `getComputedStyle`, never
+ * in inline style. Without this step, the cloned tree shows the *initial*
+ * inline state throughout the animation, then jumps to the final state once
+ * the animation commits — visually broken (animations stutter or vanish).
+ *
+ * Reads computed values for `transform` / `opacity` / `filter` (the three
+ * properties WAAPI hardware-accelerates) and writes them as inline style on
+ * the clone. Only iterates elements with active animations so the per-snapshot
+ * cost is proportional to the number of in-flight animations, not tree size.
+ */
+function captureActiveAnimations(
+	original: HTMLElement,
+	clone: HTMLElement
+): void {
+	const origAll = original.querySelectorAll<HTMLElement>("*")
+	const cloneAll = clone.querySelectorAll<HTMLElement>("*")
+	if (origAll.length !== cloneAll.length) return
+	for (let i = 0; i < origAll.length; i++) {
+		const orig = origAll[i]
+		if (typeof orig.getAnimations !== "function") continue
+		if (orig.getAnimations().length === 0) continue
+		const computed = getComputedStyle(orig)
+		const cloned = cloneAll[i]
+		for (const prop of ANIMATED_PROPS) {
+			cloned.style.setProperty(prop, computed.getPropertyValue(prop))
+		}
+	}
+}
+
 export interface SnapshotOptions {
 	/**
 	 * When true, `getComputedStyle` is queried on every descendant with an
@@ -619,7 +658,9 @@ export async function snapshotToCanvas(
 	clone.style.opacity = "1"
 
 	syncFormState(el, clone)
+	injectCaretAndSelection(el, clone)
 	applyInteractiveStyles(el, clone, options.captureTransitions ?? false)
+	captureActiveAnimations(el, clone)
 	freezeResolvedTextMetrics(el, clone)
 	embedImages(el, clone)
 

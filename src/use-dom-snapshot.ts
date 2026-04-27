@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useRef, useState } from "react"
+import { setupCaretBlink } from "./caret"
 import { observeInvalidations } from "./invalidation-observers"
 import { createScheduler } from "./scheduler"
 import { snapshotToCanvas } from "./snapshot"
@@ -71,7 +72,7 @@ export function useDomSnapshot(
 		let lastTransitionInvalidateMs = 0
 
 		const tryTransitionInvalidate = () => {
-			if (!observers?.hasActiveTransitions()) return
+			if (!observers?.hasActiveAnimations()) return
 			const now = performance.now()
 			if (now - lastTransitionInvalidateMs >= TRANSITION_MIN_INTERVAL_MS) {
 				lastTransitionInvalidateMs = now
@@ -94,7 +95,7 @@ export function useDomSnapshot(
 						onSnapshotRef.current?.(target)
 					},
 					{
-						captureTransitions: observers?.hasActiveTransitions() ?? false,
+						captureTransitions: observers?.hasActiveAnimations() ?? false,
 						maxPixelRatio: maxPixelRatioRef.current,
 					}
 				)
@@ -104,7 +105,7 @@ export function useDomSnapshot(
 
 			// Transition-aware mini-loop: while any transition is active,
 			// schedule a throttled re-invalidation so intermediates sample.
-			if (observers?.hasActiveTransitions()) {
+			if (observers?.hasActiveAnimations()) {
 				transitionLoopHandle = requestAnimationFrame(tryTransitionInvalidate)
 			}
 		}
@@ -117,6 +118,8 @@ export function useDomSnapshot(
 			interactive,
 		})
 
+		const blinkCleanup = setupCaretBlink(el, () => scheduler.invalidate())
+
 		// Initial snapshot — fire once on mount.
 		scheduler.invalidate()
 
@@ -126,6 +129,7 @@ export function useDomSnapshot(
 			}
 			scheduler.dispose()
 			observers?.dispose()
+			blinkCleanup()
 		}
 	}, [sourceRef, interactive])
 
