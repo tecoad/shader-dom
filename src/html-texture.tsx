@@ -14,6 +14,21 @@ export interface HtmlTextureProps {
 	 * `window.devicePixelRatio`.
 	 */
 	maxPixelRatio?: number
+	/**
+	 * When true, the overlay fills the parent <Shader> via
+	 * `position: absolute; inset: 0`, letting the Shader (and whatever sizes
+	 * it from outside) dictate dimensions. Default is content-driven sizing —
+	 * the overlay is `position: relative` and its children's intrinsic size
+	 * drives the Shader.
+	 *
+	 * Use `fill` when the snapshot tree's height comes from outside the
+	 * Shader (e.g. a parent sized via `h-[70dvh]`) and you want to use
+	 * `h-full` / `w-full` inside. This avoids viewport units (vh/dvh/vw/dvw)
+	 * being re-resolved against the SVG foreignObject's own box during
+	 * rasterization, which produces a height/width mismatch between the
+	 * live element and its cloned copy in the snapshot.
+	 */
+	fill?: boolean
 }
 
 /**
@@ -44,12 +59,14 @@ function HtmlTextureInner({
 	children,
 	interactive = false,
 	maxPixelRatio,
+	fill = false,
 	context,
 }: HtmlTextureProps & { context: ShaderContextValue }) {
 	const { overlayNode, overlayRef } = useInteractiveOverlay({
 		interactive,
 		children,
 		layersContainerRef: context.layersContainerRef,
+		fill,
 	})
 
 	const snapshotCanvas = useDomSnapshot(overlayRef, {
