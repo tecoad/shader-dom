@@ -457,12 +457,22 @@ export function liquidPreset(options: LiquidPresetOptions = {}): LiquidHandle {
 		let tex: CanvasTexture | null = null
 		let boundCanvas: HTMLCanvasElement | null = null
 
+		// Cache the renderer's max anisotropy once — capped at 16 (typical
+		// hardware ceiling). Smooths text-edge sampling on the displaced plane:
+		// without it, even small wave displacement produces fractional UV offsets
+		// at glyph edges every frame, making text shimmer/alias.
+		const maxAnisotropy = Math.min(
+			16,
+			created.three.renderer.capabilities.getMaxAnisotropy()
+		)
+
 		return {
 			onSnapshot(snapshot) {
 				if (boundCanvas !== snapshot) {
 					if (tex) tex.dispose()
 					tex = new CanvasTexture(snapshot)
 					tex.colorSpace = SRGBColorSpace
+					tex.anisotropy = maxAnisotropy
 					boundCanvas = snapshot
 					created.liquidPlane.setImage(tex)
 				} else if (tex) {
